@@ -339,6 +339,168 @@ bool LinearAlignment(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vect
 //    return false;
 }
 
+void RefineGravity_Stereo(map<double, ImageFrame> &all_image_frame, Vector3d &g, VectorXd &x)
+{
+    Vector3d g0 = g.normalized() * G.norm();
+    Vector3d lx, ly;
+    //VectorXd x;
+    int all_frame_count = all_image_frame.size();
+    int n_state = all_frame_count * 3 + 2 + 4;
+
+    MatrixXd A{n_state, n_state};
+    A.setZero();
+    VectorXd b{n_state};
+    b.setZero();
+
+    map<double, ImageFrame>::iterator frame_i;
+    map<double, ImageFrame>::iterator frame_j;
+    for(int k = 0; k < 4; k++)
+    {
+        MatrixXd lxly(3, 2);
+        lxly = TangentBasis(g0);
+        int i = 0;
+        for (frame_i = all_image_frame.begin(); next(frame_i) != all_image_frame.end(); frame_i++, i++)
+        {
+            frame_j = next(frame_i);
+
+            MatrixXd tmp_A(6, 12);
+            tmp_A.setZero();
+            VectorXd tmp_b(6);
+            tmp_b.setZero();
+
+            double dt = frame_j->second.pre_integration->sum_dt;
+
+
+            tmp_A.block<3, 3>(0, 0) = -dt * Matrix3d::Identity();
+            tmp_A.block<3, 2>(0, 6) = frame_i->second.R.transpose() * dt * dt / 2 * Matrix3d::Identity() * lxly;
+//            tmp_A.block<3, 3>(0, 9) = -frame_j->second.pre_integration->jacobian.block<3, 3>(O_P, O_BA);
+            tmp_b.block<3, 1>(0, 0) = frame_j->second.pre_integration->delta_p + frame_i->second.R.transpose() * frame_j->second.R * TIC[0] - TIC[0] - frame_i->second.R.transpose() * dt * dt / 2 * g0 - frame_i->second.R.transpose() * (frame_j->second.T - frame_i->second.T);
+
+            tmp_A.block<3, 3>(3, 0) = -Matrix3d::Identity();
+            tmp_A.block<3, 3>(3, 3) = frame_i->second.R.transpose() * frame_j->second.R;
+            tmp_A.block<3, 2>(3, 6) = frame_i->second.R.transpose() * dt * Matrix3d::Identity() * lxly;
+//            tmp_A.block<3, 3>(3, 9) = -frame_j->second.pre_integration->jacobian.block<3, 3>(O_V, O_BA);
+            tmp_b.block<3, 1>(3, 0) = frame_j->second.pre_integration->delta_v - frame_i->second.R.transpose() * dt * Matrix3d::Identity() * g0;
+
+
+            Matrix<double, 6, 6> cov_inv = Matrix<double, 6, 6>::Zero();
+            //cov.block<6, 6>(0, 0) = IMU_cov[i + 1];
+            //MatrixXd cov_inv = cov.inverse();
+            cov_inv.setIdentity();
+
+            MatrixXd r_A = tmp_A.transpose() * cov_inv * tmp_A;
+            VectorXd r_b = tmp_A.transpose() * cov_inv * tmp_b;
+
+            A.block<6, 6>(i * 3, i * 3) += r_A.topLeftCorner<6, 6>();
+            b.segment<6>(i * 3) += r_b.head<6>();
+
+            A.bottomRightCorner<6, 6>() += r_A.bottomRightCorner<6, 6>();
+            b.tail<6>() += r_b.tail<6>();
+
+            A.block<6, 6>(i * 3, n_state - 6) += r_A.topRightCorner<6, 6>();
+            A.block<6, 6>(n_state - 6, i * 3) += r_A.bottomLeftCorner<6, 6>();
+        }
+        A = A * 1000.0;
+        b = b * 1000.0;
+        x = A.ldlt().solve(b);
+        VectorXd dg = x.segment<2>(n_state - 6);
+        g0 = (g0 + lxly * dg).normalized() * G.norm();
+        //double s = x(n_state - 1);
+    }
+    g = g0;
+
+//    Bas[0] = x.tail<3>();
+//    ROS_WARN_STREAM("Bas " << Bas[0].transpose());
+//    for (int i = 0; i <= WINDOW_SIZE; i++)
+//        Bas[i] += delta_ba;
+//
+//    for (frame_i = all_image_frame.begin(); next(frame_i) != all_image_frame.end( ); frame_i++)
+//    {
+//        frame_j = next(frame_i);
+//        frame_j->second.pre_integration->repropagate(delta_ba, Vector3d::Zero());
+//    }
+
+}
+
+bool LinearAlignment_Stereo(map<double, ImageFrame> &all_image_frame, Vector3d &g, VectorXd &x)
+{
+    int all_frame_count = all_image_frame.size();
+    int n_state = all_frame_count * 3 + 3 + 1;
+
+    MatrixXd A{n_state, n_state};
+    A.setZero();
+    VectorXd b{n_state};
+    b.setZero();
+
+    map<double, ImageFrame>::iterator frame_i;
+    map<double, ImageFrame>::iterator frame_j;
+    int i = 0;
+    for (frame_i = all_image_frame.begin(); next(frame_i) != all_image_frame.end(); frame_i++, i++)
+    {
+        frame_j = next(frame_i);
+
+        MatrixXd tmp_A(6, 10);
+        tmp_A.setZero();
+        VectorXd tmp_b(6);
+        tmp_b.setZero();
+
+        double dt = frame_j->second.pre_integration->sum_dt;
+
+        tmp_A.block<3, 3>(0, 0) = -dt * Matrix3d::Identity();
+        tmp_A.block<3, 3>(0, 6) = frame_i->second.R.transpose() * dt * dt / 2 * Matrix3d::Identity();
+        tmp_b.block<3, 1>(0, 0) = frame_j->second.pre_integration->delta_p + frame_i->second.R.transpose() * frame_j->second.R * TIC[0] - TIC[0] - frame_i->second.R.transpose() * (frame_j->second.T - frame_i->second.T) ;
+        //cout << "delta_p   " << frame_j->second.pre_integration->delta_p.transpose() << endl;
+        tmp_A.block<3, 3>(3, 0) = -Matrix3d::Identity();
+        tmp_A.block<3, 3>(3, 3) = frame_i->second.R.transpose() * frame_j->second.R;
+        tmp_A.block<3, 3>(3, 6) = frame_i->second.R.transpose() * dt * Matrix3d::Identity();
+        tmp_b.block<3, 1>(3, 0) = frame_j->second.pre_integration->delta_v;
+        //cout << "delta_v   " << frame_j->second.pre_integration->delta_v.transpose() << endl;
+
+        Matrix<double, 6, 6> cov_inv = Matrix<double, 6, 6>::Zero();
+        //cov.block<6, 6>(0, 0) = IMU_cov[i + 1];
+        //MatrixXd cov_inv = cov.inverse();
+        cov_inv.setIdentity();
+
+        MatrixXd r_A = tmp_A.transpose() * cov_inv * tmp_A;
+        VectorXd r_b = tmp_A.transpose() * cov_inv * tmp_b;
+
+        A.block<6, 6>(i * 3, i * 3) += r_A.topLeftCorner<6, 6>();
+        b.segment<6>(i * 3) += r_b.head<6>();
+
+        A.bottomRightCorner<4, 4>() += r_A.bottomRightCorner<4, 4>();
+        b.tail<4>() += r_b.tail<4>();
+
+        A.block<6, 4>(i * 3, n_state - 4) += r_A.topRightCorner<6, 4>();
+        A.block<4, 6>(n_state - 4, i * 3) += r_A.bottomLeftCorner<4, 6>();
+    }
+    A = A * 1000.0;
+    b = b * 1000.0;
+    x = A.ldlt().solve(b);
+
+//    double cond = sqrt(1.0/A.ldlt().rcond());
+//    ROS_WARN_STREAM("condition num: %f " << cond);
+
+//    double s = x(n_state - 1) / 100.0;
+//    ROS_WARN_STREAM("estimated scale: %f " << s);
+    g = x.segment<3>(n_state - 4);
+//    ROS_WARN_STREAM(" result g     " << g.norm() << " " << g.transpose());
+//    if(fabs(g.norm() - G.norm()) > 0.5 || s < 0)
+//    {
+//        return false;
+//    }
+
+    RefineGravity_Stereo(all_image_frame, g, x);
+//    s = (x.tail<4>())(0) / 100.0;
+//    (x.tail<4>())(0) = s;
+//    ROS_WARN_STREAM("refine scale: %f " << s);
+//    ROS_WARN_STREAM(" refine  g   " << g.norm() << " " << g.transpose());
+//    if(s < 0.0 )
+//        return false;
+//    else
+        return true;
+//    return false;
+}
+
 void RefineGravity_Joint(map<double, ImageFrame> &all_image_frame, Vector3d &g, VectorXd &x, Vector3d* Bas)
 {
     Vector3d g0 = g.normalized() * G.norm();
@@ -745,6 +907,7 @@ bool LinearAlignment_Sv(map<double, ImageFrame> &all_image_frame, Vector3d &g, V
 
 }
 
+// Stereo
 void RefineGravity_NoVelocity(map<double, ImageFrame> &all_image_frame, Vector3d &g, VectorXd &x)
 {
     Vector3d g0 = g.normalized() * G.norm();
@@ -784,17 +947,17 @@ void RefineGravity_NoVelocity(map<double, ImageFrame> &all_image_frame, Vector3d
             double dt23 = frame_k->second.pre_integration->sum_dt;
 
             tmp_A.block<3, 2>(0, 0) = 0.5 * frame_i->second.R.transpose() * (dt23 * dt23 * dt12 + dt12 * dt12 * dt23) * lxly;
-            tmp_A.block<3, 1>(0, 2) = frame_i->second.R.transpose() * ((frame_k->second.T - frame_j->second.T) * dt12 - (frame_j->second.T - frame_i->second.T) * dt23) ;
-            tmp_b.block<3, 1>(0, 0) = frame_i->second.R.transpose() * frame_j->second.R * frame_k->second.pre_integration->delta_p * dt12 - frame_j->second.pre_integration->delta_p * dt23 + frame_j->second.pre_integration->delta_v * dt12 * dt23 - 0.5 * frame_i->second.R.transpose() * (dt23 * dt23 * dt12 + dt12 * dt12 * dt23) * g0 - frame_i->second.R.transpose() * (frame_j->second.R - frame_k->second.R) * TIC[0] * dt12 + frame_i->second.R.transpose() * (frame_i->second.R - frame_j->second.R) * TIC[0] * dt23;
+//            tmp_A.block<3, 1>(0, 2) = frame_i->second.R.transpose() * ((frame_k->second.T - frame_j->second.T) * dt12 - (frame_j->second.T - frame_i->second.T) * dt23) ;
+            tmp_b.block<3, 1>(0, 0) = frame_i->second.R.transpose() * frame_j->second.R * frame_k->second.pre_integration->delta_p * dt12 - frame_j->second.pre_integration->delta_p * dt23 + frame_j->second.pre_integration->delta_v * dt12 * dt23 - 0.5 * frame_i->second.R.transpose() * (dt23 * dt23 * dt12 + dt12 * dt12 * dt23) * g0 - frame_i->second.R.transpose() * (frame_j->second.R - frame_k->second.R) * TIC[0] * dt12 + frame_i->second.R.transpose() * (frame_i->second.R - frame_j->second.R) * TIC[0] * dt23 - frame_i->second.R.transpose() * ((frame_k->second.T - frame_j->second.T) * dt12 - (frame_j->second.T - frame_i->second.T) * dt23);
 
             r_A.block<3, 3>(i * 3, 0) = tmp_A;
             r_b.segment<3>(i * 3) = tmp_b;
 
         }
         A = r_A.transpose() * r_A;
-        A = A * 1000000.0;
+        A = A * 1000.0;
         b = r_A.transpose() * r_b;
-        b = b * 1000000.0;
+        b = b * 1000.0;
         x = A.ldlt().solve(b);
         VectorXd dg = x.segment<2>(0);
         g0 = (g0 + lxly * dg).normalized() * G.norm();
@@ -835,8 +998,8 @@ bool LinearAlignment_NoVelocity(map<double, ImageFrame> &all_image_frame, Vector
         double dt23 = frame_k->second.pre_integration->sum_dt;
 
         tmp_A.block<3, 3>(0, 0) = 0.5 * frame_i->second.R.transpose() * (dt23 * dt23 * dt12 + dt12 * dt12 * dt23);
-        tmp_A.block<3, 1>(0, 3) = frame_i->second.R.transpose() * ((frame_k->second.T - frame_j->second.T) * dt12 - (frame_j->second.T - frame_i->second.T) * dt23) / 100 ;
-        tmp_b.block<3, 1>(0, 0) = frame_i->second.R.transpose() * frame_j->second.R * frame_k->second.pre_integration->delta_p * dt12 - frame_j->second.pre_integration->delta_p * dt23 + frame_j->second.pre_integration->delta_v * dt12 * dt23 - frame_i->second.R.transpose() * (frame_j->second.R - frame_k->second.R) * TIC[0] * dt12 + frame_i->second.R.transpose() * (frame_i->second.R - frame_j->second.R) * TIC[0] * dt23;
+//        tmp_A.block<3, 1>(0, 3) = frame_i->second.R.transpose() * ((frame_k->second.T - frame_j->second.T) * dt12 - (frame_j->second.T - frame_i->second.T) * dt23) / 100 ;
+        tmp_b.block<3, 1>(0, 0) = frame_i->second.R.transpose() * frame_j->second.R * frame_k->second.pre_integration->delta_p * dt12 - frame_j->second.pre_integration->delta_p * dt23 + frame_j->second.pre_integration->delta_v * dt12 * dt23 - frame_i->second.R.transpose() * (frame_j->second.R - frame_k->second.R) * TIC[0] * dt12 + frame_i->second.R.transpose() * (frame_i->second.R - frame_j->second.R) * TIC[0] * dt23 - frame_i->second.R.transpose() * ((frame_k->second.T - frame_j->second.T) * dt12 - (frame_j->second.T - frame_i->second.T) * dt23);
 
         //wheel preintegration w.r.t s,sx
 //        tmp_A.block<3, 1>(3, 3) = (frame_i->second.R * RIO).transpose() * (frame_j->second.T - frame_i->second.T) / 100;
@@ -850,37 +1013,37 @@ bool LinearAlignment_NoVelocity(map<double, ImageFrame> &all_image_frame, Vector
     }
 //    ROS_WARN_STREAM("i: " << i);
     A = r_A.transpose() * r_A;
-    A = A * 1000000.0;
+    A = A * 1000.0;
 //    ROS_WARN_STREAM("A size:  " << A);
     b = r_A.transpose() * r_b;
-    b = b * 1000000.0;
+    b = b * 1000.0;
 //    ROS_WARN_STREAM("b size:  " << b);
     x = A.ldlt().solve(b);
 
     double cond = sqrt(1.0/A.ldlt().rcond());
     ROS_WARN_STREAM("condition num: %f " << cond);
 
-    double s = x(3) / 100 ;
-    ROS_WARN_STREAM("estimated scale: %f " << s);
+//    double s = x(3) / 100 ;
+//    ROS_WARN_STREAM("estimated scale: %f " << s);
 //    double delta_sx=x(4);
 //    ROS_WARN_STREAM("delta_sx: %f " << delta_sx);
     g = x.segment<3>(0);
     ROS_WARN_STREAM(" result g     " << g.norm() << " " << g.transpose());
-    if(fabs(g.norm() - G.norm()) > 0.5 || s < 0)
-    {
-        return false;
-    }
+//    if(fabs(g.norm() - G.norm()) > 0.5 || s < 0)
+//    {
+//        return false;
+//    }
 
     RefineGravity_NoVelocity(all_image_frame, g, x);
-    s = (x.tail<1>())(0) ;
+//    s = (x.tail<1>())(0) ;
 //    (x.tail<1>())(0) = s;
-    ROS_WARN_STREAM("refine scale: %f " << s);
+//    ROS_WARN_STREAM("refine scale: %f " << s);
     ROS_WARN_STREAM(" refine g    " << g.norm() << " " << g.transpose());
 //    if(s < 0.0 )
 //        return false;
 //    else
 //        return true;
-    return false;
+//    return true;
 
 }
 
@@ -1728,6 +1891,71 @@ bool VisualIMUAlignment(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs,
 }
 */
 
+void WheelExtrisincInitialize(map<double, ImageFrame> &all_image_frame, MatrixXd &r_A, Matrix3d &R0, Matrix3d &rio, Vector3d &tio, VectorXd &x){
+
+    MatrixXd A{(all_image_frame.size() ) * 3, 6};
+    A.setZero();
+    VectorXd b{(all_image_frame.size() )* 3};
+    b.setZero();
+    VectorXd err{all_image_frame.size() * 3 };
+    err.setZero();
+    VectorXd x_ep;
+    for (int n=0;n<1;n++) {
+        Vector3d        Ps[(all_image_frame.size())];
+        Vector3d        Vs[(all_image_frame.size())];
+        Matrix3d        Rs[(all_image_frame.size())];
+        map<double, ImageFrame>::iterator frame_i;
+        map<double, ImageFrame>::iterator frame_j;
+
+        int i = 0;
+        for (frame_i = all_image_frame.begin(); next(frame_i) != all_image_frame.end(); frame_i++, i++ ) {
+            frame_j = next(frame_i);
+            Vs[i] = R0 * frame_i->second.R * x.segment<3>(i * 3);
+            Rs[i] = R0 * frame_i->second.R;
+            Matrix3d R_w_x;
+            Vector3d w_x = R0 * RIC[0].transpose() * (frame_j->second.pre_integration->linearized_gyr - frame_j->second.pre_integration->linearized_bg);
+            R_w_x << 0, -w_x(2), w_x(1),
+                    w_x(2), 0, -w_x(0),
+                    -w_x(1), w_x(0), 0;
+            A.block<3, 3>(i * 3, 0) = exp(-err.segment<3>(i * 3).norm() * 100) * RIC[0] * R0.transpose();
+            A.block<3, 3>(i * 3, 3) = exp(-err.segment<3>(i * 3).norm() * 100) * RIC[0] * R0.transpose() * R_w_x;
+            b.segment<3>(i * 3) = exp(-err.segment<3>(i * 3).norm() * 100) * Rs[i].transpose() * Vs[i];
+
+        }
+        {
+            Vs[all_image_frame.size()-1] = R0 * frame_j->second.R * x.segment<3>((all_image_frame.size()-1) * 3);
+            Rs[all_image_frame.size()-1] = R0 * frame_j->second.R;
+            Matrix3d R_w_x;
+            Vector3d w_x = R0 * RIC[0].transpose() * (frame_j->second.pre_integration->gyr_1 - frame_j->second.pre_integration->linearized_bg);
+            R_w_x << 0, -w_x(2), w_x(1),
+                    w_x(2), 0, -w_x(0),
+                    -w_x(1), w_x(0), 0;
+            A.block<3, 3>((all_image_frame.size()-1) * 3, 0) = exp(-err.segment<3>((all_image_frame.size()-1) * 3).norm() * 100) * RIC[0] * R0.transpose();
+            A.block<3, 3>((all_image_frame.size()-1) * 3, 3) = exp(-err.segment<3>((all_image_frame.size()-1) * 3).norm() * 100) * RIC[0] * R0.transpose() * R_w_x;
+            b.segment<3>((all_image_frame.size()-1) * 3) = exp(-err.segment<3>((all_image_frame.size()-1) * 3).norm() * 100) * Rs[all_image_frame.size()-1].transpose() * Vs[all_image_frame.size()-1];
+
+        }
+        r_A = A.transpose() * A;
+        VectorXd r_b = A.transpose() * b;
+        x_ep = r_A.ldlt().solve(r_b);
+        err = (A * x_ep - b).cwiseAbs();
+//            ROS_WARN_STREAM("err     " << err);
+        ROS_WARN_STREAM("max err     " << err.maxCoeff());
+    }
+    r_A = r_A.inverse();
+//        for (int i = 0; i <= frame_count; i++)
+//        {
+//            Vb[i] = x_ep.head<3>();
+//        }
+
+    Matrix3d tmp_R = Eigen::Quaterniond::FromTwoVectors(x_ep.head<3>(), Vector3d{1,0,0}).toRotationMatrix();
+    rio = RIC[0] * R0.transpose() * Utility::ypr2R(Eigen::Vector3d{Utility::R2ypr(tmp_R).x() , 0, 0}).transpose();
+    tio = x_ep.tail<3>();
+    ROS_WARN_STREAM("rio     " << rio);
+    ROS_WARN_STREAM("rio ypr     " << Utility::R2ypr_m(rio).transpose());
+    ROS_WARN_STREAM("tio     " << tio.transpose());
+
+}
 
 bool VisualIMUAlignment(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs, Vector3d &g, VectorXd &x, Vector3d &wheel_s, Vector3d* Bas)
 {

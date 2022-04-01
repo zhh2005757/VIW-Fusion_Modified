@@ -200,6 +200,7 @@ class Estimator
     double para_Pose[WINDOW_SIZE + 1][SIZE_POSE];
     double para_SpeedBias[WINDOW_SIZE + 1][SIZE_SPEEDBIAS];
     double para_EP[WINDOW_SIZE + 1][SIZE_EP];
+    double para_TIO[WINDOW_SIZE + 1][SIZE_TIO];
     double para_Feature[NUM_OF_F][SIZE_FEATURE];
     double para_Ex_Pose[2][SIZE_POSE];
     double para_Ex_Pose_wheel[1][SIZE_POSE];
@@ -239,7 +240,6 @@ class Estimator
 
     //public test variable
     double yaw_test, pitch_test, roll_test;
-    int window_size = 15;
     MatrixXd r_A;
     VectorXd x_ep;
 };

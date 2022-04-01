@@ -105,7 +105,8 @@ enum SIZE_PARAMETERIZATION
     SIZE_ROTATION = 4,
     SIZE_SPEEDBIAS = 9,
     SIZE_FEATURE = 1,
-    SIZE_EP = 6
+    SIZE_EP = 3,
+    SIZE_TIO = 3
 };
 
 enum StateOrder
@@ -115,8 +116,6 @@ enum StateOrder
     O_V = 6,
     O_BA = 9,
     O_BG = 12,
-    O_PP = 15,
-    O_VV = 18
 //    O_SX = 0,
 //    O_SY = 1,
 //    O_SW = 2

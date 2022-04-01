@@ -807,6 +807,22 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
                     {
                         pre_integrations[i]->repropagate(Vector3d::Zero(), Bgs[i]);
                     }
+
+                    // Stereo IMU to estimate G
+                    VectorXd x;
+                    LinearAlignment_NoVelocity(all_image_frame, g, x);
+                    R0 = Utility::g2R(g);
+                    double yaw = Utility::R2ypr(R0 * Rs[0]).x();
+                    R0 = Utility::ypr2R(Eigen::Vector3d{-yaw , 0, 0}) * R0;
+                    g = R0 * g;
+                    ROS_WARN_STREAM("g0     " << g.transpose());
+                    ROS_WARN_STREAM("R0  " << Utility::R2ypr(R0).transpose());
+//                    for (int i = 0; i <= frame_count; i++)
+//                    {
+//                        Ps[i] = R0 * Ps[i];//t_w_bi
+//                        Rs[i] = R0 * Rs[i];//R_w_bi
+//                    }
+
                     optimization();
                     updateLatestStates();
                     solver_flag = NON_LINEAR;
@@ -1214,67 +1230,27 @@ bool Estimator::visualInitialAlign()
 //    ROS_WARN_STREAM("my R0  " << Rs[0]);
 
     // calib rio
-    if (USE_WHEEL && ONLY_INITIAL_WITH_WHEEL) {
-        MatrixXd A{(all_image_frame.size() ) * 3, 3};
-//        MatrixXd A{(all_image_frame.size() ) * 3, 6};
-        A.setZero();
-        VectorXd b{(all_image_frame.size() )* 3};
-        b.setZero();
-        VectorXd err{all_image_frame.size() * 3 };
-        err.setZero();
-        for (int n=0;n<1;n++) {
-            Vector3d        Ps[(all_image_frame.size())];
-            Vector3d        Vs[(all_image_frame.size())];
-            Matrix3d        Rs[(all_image_frame.size())];
-            map<double, ImageFrame>::iterator frame_i;
-            map<double, ImageFrame>::iterator frame_j;
-            MatrixXd cov_inv{(all_image_frame.size() ) * 3, (all_image_frame.size() ) * 3};
-            int i = 0;
-            for (frame_i = all_image_frame.begin(); next(frame_i) != all_image_frame.end(); frame_i++, i++ ) {
-                frame_j = next(frame_i);
-                Vs[i] = rot_diff * frame_i->second.R * x.segment<3>(i * 3);
-                Ps[i] = rot_diff * frame_i->second.T;
-                Rs[i] = rot_diff * frame_i->second.R;
-                Matrix3d R_w_x;
-                Vector3d w_x = R0 * RIC[0].transpose() * (frame_j->second.pre_integration->gyr_0 - frame_j->second.pre_integration->linearized_bg);
-                R_w_x << 0, -w_x(2), w_x(1),
-                        w_x(2), 0, -w_x(0),
-                        -w_x(1), w_x(0), 0;
-                A.block<3, 3>(i * 3, 0) = exp(-err.segment<3>(i * 3).norm() * 100) * RIC[0] * R0.transpose();
-//                A.block<3, 3>(i * 3, 3) = exp(-err.segment<3>(i * 3).norm() * 100) * Rs[i] * RIC[0] * R0.transpose() * R_w_x;
-                b.segment<3>(i * 3) = exp(-err.segment<3>(i * 3).norm() * 100) * Rs[i].transpose() * Vs[i];
-                cov_inv.block<3, 3>(i * 3, i * 3) = frame_j->second.pre_integration->covariance.block<3, 3>(0, 0).inverse();
-            }
+//    if (USE_WHEEL && !ONLY_INITIAL_WITH_WHEEL) {
+
+        WheelExtrisincInitialize(all_image_frame, r_A, R0, rio, tio, x);
+
+        for (frame_i = all_image_frame.begin(); next(frame_i) != all_image_frame.end(); frame_i++)
+        {
+            frame_j= next(frame_i);
+            double dt = frame_j->second.pre_integration->sum_dt;
+            if(frame_i->second.is_key_frame)
             {
-                Vs[all_image_frame.size()-1] = rot_diff * frame_j->second.R * x.segment<3>((all_image_frame.size()-1) * 3);
-                Ps[all_image_frame.size()-1] = rot_diff * frame_j->second.T;
-                Rs[all_image_frame.size()-1] = rot_diff * frame_j->second.R;
+                kv++;
                 Matrix3d R_w_x;
-                Vector3d w_x = R0 * RIC[0].transpose() * (frame_j->second.pre_integration->gyr_1 - frame_j->second.pre_integration->linearized_bg);
+                Vector3d w_x = R0 * RIC[0].transpose() * (frame_j->second.pre_integration->linearized_gyr - frame_j->second.pre_integration->linearized_bg);
                 R_w_x << 0, -w_x(2), w_x(1),
                         w_x(2), 0, -w_x(0),
                         -w_x(1), w_x(0), 0;
-                A.block<3, 3>((all_image_frame.size()-1) * 3, 0) = exp(-err.segment<3>((all_image_frame.size()-1) * 3).norm() * 100) * RIC[0] * R0.transpose();
-//                A.block<3, 3>((all_image_frame.size()-1) * 3, 3) = exp(-err.segment<3>((all_image_frame.size()-1) * 3).norm() * 100) * Rs[all_image_frame.size()-1] * RIC[0] * R0.transpose() * R_w_x;
-                b.segment<3>((all_image_frame.size()-1) * 3) = exp(-err.segment<3>((all_image_frame.size()-1) * 3).norm() * 100) * Rs[all_image_frame.size()-1].transpose() * Vs[all_image_frame.size()-1];
-                cov_inv.block<3, 3>((all_image_frame.size()-1) * 3, (all_image_frame.size()-1) * 3) = frame_j->second.pre_integration->covariance.block<3, 3>(0, 0).inverse();
+                // update initial Vb
+                Vb[kv] = (Rs[kv] * RIC[0] * R0.transpose()).transpose() * Vs[kv] - R_w_x * tio;
             }
-            r_A = A.transpose() * cov_inv * A;
-            VectorXd r_b = A.transpose() * b;
-            x_ep = r_A.ldlt().solve(r_b);
-            err = (A * x_ep - b).cwiseAbs();
-//            ROS_WARN_STREAM("err     " << err);
-            ROS_WARN_STREAM("max err     " << err.maxCoeff());
         }
-        r_A = r_A.inverse();
-//        V_ck_bk = RIC[0].transpose() * Rs[frame_count].transpose() * Vs[frame_count];
-        Matrix3d tmp_R = Eigen::Quaterniond::FromTwoVectors(x_ep.head<3>(), Vector3d{1,0,0}).toRotationMatrix();
-        rio = RIC[0] * R0.transpose() * Utility::ypr2R(Eigen::Vector3d{Utility::R2ypr(tmp_R).x() , 0, 0}).transpose() ;
-//        tio = x_ep.tail<3>();
-        ROS_WARN_STREAM("rio     " << rio);
-        ROS_WARN_STREAM("rio ypr     " << Utility::R2ypr_m(rio).transpose());
-//        ROS_WARN_STREAM("tio     " << tio.transpose());
-    }
+//    }
     // end
 
 
@@ -1334,9 +1310,12 @@ void Estimator::vector2double()
 
         if(USE_IMU)
         {
-            para_SpeedBias[i][0] = Vs[i].x();
-            para_SpeedBias[i][1] = Vs[i].y();
-            para_SpeedBias[i][2] = Vs[i].z();
+//            para_SpeedBias[i][0] = Vs[i].x();
+//            para_SpeedBias[i][1] = Vs[i].y();
+//            para_SpeedBias[i][2] = Vs[i].z();
+            para_SpeedBias[i][0] = Vb[i].x();
+            para_SpeedBias[i][1] = Vb[i].y();
+            para_SpeedBias[i][2] = Vb[i].z();
 
             para_SpeedBias[i][3] = Bas[i].x();
             para_SpeedBias[i][4] = Bas[i].y();
@@ -1346,16 +1325,21 @@ void Estimator::vector2double()
             para_SpeedBias[i][7] = Bgs[i].y();
             para_SpeedBias[i][8] = Bgs[i].z();
 
-            para_EP[i][0] = Vb[i].x();
-            para_EP[i][1] = Vb[i].y();
-            para_EP[i][2] = Vb[i].z();
+//            para_EP[i][0] = Vb[i].x();
+//            para_EP[i][1] = Vb[i].y();
+//            para_EP[i][2] = Vb[i].z();
+//            para_EP[i][3] = tio.x();
+//            para_EP[i][4] = tio.y();
+//            para_EP[i][5] = tio.z();
 
         }
     }
 
-    para_EP[0][3] = tio.x();
-    para_EP[0][4] = tio.y();
-    para_EP[0][5] = tio.z();
+    para_TIO[0][0] = tio.x();
+    para_TIO[0][1] = tio.y();
+    para_TIO[0][2] = tio.z();
+
+
 
     for (int i = 0; i < NUM_OF_CAM; i++)
     {
@@ -1427,6 +1411,16 @@ void Estimator::double2vector()
                                            para_Pose[0][5]).toRotationMatrix().transpose();
         }
 
+        tio = Vector3d(para_TIO[0][1],
+                       para_TIO[0][2],
+                       para_TIO[0][3]);
+
+        Matrix3d R_w_0;
+        Vector3d w_x_0 = R0 * RIC[0].transpose() * (gyr_0 - Bgs[frame_count]);
+        R_w_0 << 0, -w_x_0(2), w_x_0(1),
+                w_x_0(2), 0, -w_x_0(0),
+                -w_x_0(1), w_x_0(0), 0;
+
         for (int i = 0; i <= WINDOW_SIZE; i++)
         {
 
@@ -1437,9 +1431,14 @@ void Estimator::double2vector()
                                     para_Pose[i][2] - para_Pose[0][2]) + origin_P0;
 
 
-                Vs[i] = rot_diff * Vector3d(para_SpeedBias[i][0],
-                                            para_SpeedBias[i][1],
-                                            para_SpeedBias[i][2]);
+                Vb[i] = Vector3d(para_SpeedBias[i][0],
+                                 para_SpeedBias[i][1],
+                                 para_SpeedBias[i][2]);
+
+//                Vs[i] = rot_diff * Vector3d(para_SpeedBias[i][0],
+//                                            para_SpeedBias[i][1],
+//                                            para_SpeedBias[i][2]);
+                Vs[i] = rot_diff * Rs[i] * RIC[0] * R0.transpose() * (Vb[i] + R_w_0 * tio);
 
                 Bas[i] = Vector3d(para_SpeedBias[i][3],
                                   para_SpeedBias[i][4],
@@ -1449,9 +1448,9 @@ void Estimator::double2vector()
                                   para_SpeedBias[i][7],
                                   para_SpeedBias[i][8]);
 
-                Vb[i] = Vector3d(para_EP[i][0],
-                                 para_EP[i][1],
-                                 para_EP[i][2]);
+//                Vb[i] = Vector3d(para_EP[i][0],
+//                                 para_EP[i][1],
+//                                 para_EP[i][2]);
 
             
         }
@@ -1459,13 +1458,14 @@ void Estimator::double2vector()
         Matrix3d tmp_R = Eigen::Quaterniond::FromTwoVectors(Vb[0], Eigen::Vector3d{1,0,0}).toRotationMatrix();
         rio = RIC[0] * R0.transpose() * Utility::ypr2R(Eigen::Vector3d{Utility::R2ypr(tmp_R).x() , 0, 0}).transpose() ;
 
-        tio = Vector3d(para_EP[0][3],
-                       para_EP[0][4],
-                       para_EP[0][5]);
 
-        yaw_test = Utility::R2ypr_m(rio).x();
-        pitch_test = Utility::R2ypr_m(rio).y();
-        roll_test = Utility::R2ypr_m(rio).z();
+//        yaw_test = Utility::R2ypr_m(rio).x();
+//        pitch_test = Utility::R2ypr_m(rio).y();
+//        roll_test = Utility::R2ypr_m(rio).z();
+        yaw_test = tio.x();
+        pitch_test = tio.y();
+        roll_test = tio.z();
+        ROS_WARN_STREAM("tio     " << tio.transpose());
     }
     else
     {
@@ -1587,9 +1587,12 @@ void Estimator::optimization()
     {
         ceres::LocalParameterization *local_parameterization = new PoseLocalParameterization();
         problem.AddParameterBlock(para_Pose[i], SIZE_POSE, local_parameterization);
-        if(USE_IMU)
+        if(USE_IMU) {
             problem.AddParameterBlock(para_SpeedBias[i], SIZE_SPEEDBIAS);
+//            problem.AddParameterBlock(para_EP[i], SIZE_EP);
+        }
     }
+    problem.AddParameterBlock(para_TIO[0], SIZE_TIO);
     //TODO 为什么有IMU就不需要固定第一帧位姿
     if(!USE_IMU)
         problem.SetParameterBlockConstant(para_Pose[0]);
@@ -1726,7 +1729,7 @@ void Estimator::optimization()
                 continue;
 //            IMUFactor* imu_factor = new IMUFactor(pre_integrations[j]);
             IMUWheelFactor* imu_factor = new IMUWheelFactor(pre_integrations[j]);
-            problem.AddResidualBlock(imu_factor, NULL, para_Pose[i], para_SpeedBias[i], para_Pose[j], para_SpeedBias[j], para_EP[i]);
+            problem.AddResidualBlock(imu_factor, NULL, para_Pose[i], para_SpeedBias[i], para_Pose[j], para_SpeedBias[j], para_TIO[0]);
 
 //            std::vector<const double *> parameters(4);
 //            parameters[0] = para_Pose[i];
@@ -1734,6 +1737,10 @@ void Estimator::optimization()
 //            parameters[2] = para_Pose[j];
 //            parameters[3] = para_SpeedBias[j];
 //            imu_factor->check(const_cast<double **>(parameters.data()));
+        }
+        if (ONLY_INITIAL_WITH_WHEEL)
+        {
+            problem.SetParameterBlockConstant(para_TIO[0]);
         }
     }
     if(USE_WHEEL && !ONLY_INITIAL_WITH_WHEEL)
@@ -1839,7 +1846,8 @@ void Estimator::optimization()
 
     options.linear_solver_type = ceres::DENSE_SCHUR;
     //options.num_threads = 2;
-    options.trust_region_strategy_type = ceres::DOGLEG;
+//    options.trust_region_strategy_type = ceres::DOGLEG;
+    options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;
     options.max_num_iterations = NUM_ITERATIONS;
     //options.use_explicit_schur_complement = true;
     //options.minimizer_progress_to_stdout = true;
@@ -1873,7 +1881,7 @@ void Estimator::optimization()
             for (int i = 0; i < static_cast<int>(last_marginalization_parameter_blocks.size()); i++)
             {
                 if (last_marginalization_parameter_blocks[i] == para_Pose[0] ||
-                    last_marginalization_parameter_blocks[i] == para_SpeedBias[0])
+                    last_marginalization_parameter_blocks[i] == para_SpeedBias[0] || last_marginalization_parameter_blocks[i] == para_EP[0])
                     drop_set.push_back(i);//先验部分如果存在与要被边缘化变量相同的变量，也要对先验部分进行边缘化
             }
             // construct new marginlization_factor
@@ -1891,7 +1899,7 @@ void Estimator::optimization()
 //                IMUFactor* imu_factor = new IMUFactor(pre_integrations[1]);
                 IMUWheelFactor* imu_factor = new IMUWheelFactor(pre_integrations[1]);
                 ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(imu_factor, NULL,
-                                                                           vector<double *>{para_Pose[0], para_SpeedBias[0], para_Pose[1], para_SpeedBias[1], para_EP[0]},
+                                                                           vector<double *>{para_Pose[0], para_SpeedBias[0], para_Pose[1], para_SpeedBias[1], para_TIO[0]},
                                                                            vector<int>{0, 1});//边缘化 para_Pose[0], para_SpeedBias[0]
                 marginalization_info->addResidualBlockInfo(residual_block_info);
             }
@@ -1988,8 +1996,10 @@ void Estimator::optimization()
         for (int i = 1; i <= WINDOW_SIZE; i++)//最老图像帧数据丢弃，从i=1开始遍历
         {
             addr_shift[reinterpret_cast<long>(para_Pose[i])] = para_Pose[i - 1];// i数据保存到1-1指向的地址，滑窗向前移动一格
-            if(USE_IMU)
+            if(USE_IMU) {
                 addr_shift[reinterpret_cast<long>(para_SpeedBias[i])] = para_SpeedBias[i - 1];
+//                addr_shift[reinterpret_cast<long>(para_EP[i])] = para_EP[i - 1];
+            }
         }
         for (int i = 0; i < NUM_OF_CAM; i++)
             addr_shift[reinterpret_cast<long>(para_Ex_Pose[i])] = para_Ex_Pose[i];
@@ -2003,6 +2013,8 @@ void Estimator::optimization()
 
         addr_shift[reinterpret_cast<long>(para_Td[0])] = para_Td[0];
         addr_shift[reinterpret_cast<long>(para_Td_wheel[0])] = para_Td_wheel[0];
+
+        addr_shift[reinterpret_cast<long>(para_TIO[0])] = para_TIO[0];
 
         vector<double *> parameter_blocks = marginalization_info->getParameterBlocks(addr_shift);
 
@@ -2026,7 +2038,7 @@ void Estimator::optimization()
                 for (int i = 0; i < static_cast<int>(last_marginalization_parameter_blocks.size()); i++)
                 {
                     ROS_ASSERT(last_marginalization_parameter_blocks[i] != para_SpeedBias[WINDOW_SIZE - 1]);
-                    if (last_marginalization_parameter_blocks[i] == para_Pose[WINDOW_SIZE - 1])
+                    if (last_marginalization_parameter_blocks[i] == para_Pose[WINDOW_SIZE - 1] || last_marginalization_parameter_blocks[i] == para_EP[WINDOW_SIZE - 1])
                         drop_set.push_back(i);
                 }
                 // construct new marginlization_factor
@@ -2056,14 +2068,18 @@ void Estimator::optimization()
                 else if (i == WINDOW_SIZE)
                 {
                     addr_shift[reinterpret_cast<long>(para_Pose[i])] = para_Pose[i - 1];
-                    if(USE_IMU)
+                    if(USE_IMU) {
                         addr_shift[reinterpret_cast<long>(para_SpeedBias[i])] = para_SpeedBias[i - 1];
+//                        addr_shift[reinterpret_cast<long>(para_EP[i])] = para_EP[i - 1];
+                    }
                 }
                 else
                 {
                     addr_shift[reinterpret_cast<long>(para_Pose[i])] = para_Pose[i];
-                    if(USE_IMU)
+                    if(USE_IMU) {
                         addr_shift[reinterpret_cast<long>(para_SpeedBias[i])] = para_SpeedBias[i];
+//                        addr_shift[reinterpret_cast<long>(para_EP[i])] = para_EP[i];
+                    }
                 }
             }
             for (int i = 0; i < NUM_OF_CAM; i++)
@@ -2077,6 +2093,8 @@ void Estimator::optimization()
             addr_shift[reinterpret_cast<long>(para_plane_Z[0])] = para_plane_Z[0];
             addr_shift[reinterpret_cast<long>(para_Td[0])] = para_Td[0];
             addr_shift[reinterpret_cast<long>(para_Td_wheel[0])] = para_Td_wheel[0];
+
+            addr_shift[reinterpret_cast<long>(para_TIO[0])] = para_TIO[0];
 
             
             vector<double *> parameter_blocks = marginalization_info->getParameterBlocks(addr_shift);
@@ -2527,7 +2545,6 @@ void Estimator::updateLatestStates()
 //        H.block<3, 3>(0, 3) = latest_Q.toRotationMatrix() * RIC[0] * R0.transpose() * R_w_x;
         Z = latest_Q.toRotationMatrix().transpose() * latest_V;
 
-//        r_A = (H.transpose() * (pre_integrations[frame_count]->covariance.block<3, 3>(0, 0) / (dt * dt)) * H).inverse();
         K = r_A * H.transpose() * (H * r_A * H.transpose() + pre_integrations[frame_count]->covariance.block<3, 3>(0, 0) / (dt * dt)).inverse();
         x_ep = x_ep + K * (Z - H * x_ep);
 //        r_A = (MatrixXd::Identity(6, 6) - K * H) * r_A;

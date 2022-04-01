@@ -43,3 +43,5 @@ void solveGyroscopeBias(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs)
 void solveGyroscopeBias(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs, Vector3d &wheel_s);
 bool VisualIMUAlignment(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs, Vector3d &g, VectorXd &x);
 bool VisualIMUAlignment(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs, Vector3d &g, VectorXd &x, Vector3d &wheel_s, Vector3d* Bas);
+bool LinearAlignment_NoVelocity(map<double, ImageFrame> &all_image_frame, Vector3d &g, VectorXd &x);
+void WheelExtrisincInitialize(map<double, ImageFrame> &all_image_frame, MatrixXd &r_A, Matrix3d &R0, Matrix3d &rio, Vector3d &tio, VectorXd &x);

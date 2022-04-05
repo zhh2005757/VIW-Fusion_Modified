@@ -240,6 +240,7 @@ class Estimator
 
     //public test variable
     double yaw_test, pitch_test, roll_test;
+    Matrix3d R00;
     MatrixXd r_A;
     VectorXd x_ep;
 };

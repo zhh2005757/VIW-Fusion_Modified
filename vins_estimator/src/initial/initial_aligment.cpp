@@ -493,7 +493,7 @@ bool LinearAlignment_Stereo(map<double, ImageFrame> &all_image_frame, Vector3d &
 //    s = (x.tail<4>())(0) / 100.0;
 //    (x.tail<4>())(0) = s;
 //    ROS_WARN_STREAM("refine scale: %f " << s);
-//    ROS_WARN_STREAM(" refine  g   " << g.norm() << " " << g.transpose());
+    ROS_WARN_STREAM(" refine  g   " << g.norm() << " " << g.transpose());
 //    if(s < 0.0 )
 //        return false;
 //    else
@@ -1901,30 +1901,23 @@ void WheelExtrisincInitialize(map<double, ImageFrame> &all_image_frame, MatrixXd
     err.setZero();
     VectorXd x_ep;
     for (int n=0;n<1;n++) {
-        Vector3d        Ps[(all_image_frame.size())];
-        Vector3d        Vs[(all_image_frame.size())];
-        Matrix3d        Rs[(all_image_frame.size())];
         map<double, ImageFrame>::iterator frame_i;
         map<double, ImageFrame>::iterator frame_j;
 
         int i = 0;
         for (frame_i = all_image_frame.begin(); next(frame_i) != all_image_frame.end(); frame_i++, i++ ) {
             frame_j = next(frame_i);
-            Vs[i] = R0 * frame_i->second.R * x.segment<3>(i * 3);
-            Rs[i] = R0 * frame_i->second.R;
             Matrix3d R_w_x;
-            Vector3d w_x = R0 * RIC[0].transpose() * (frame_j->second.pre_integration->linearized_gyr - frame_j->second.pre_integration->linearized_bg);
+            Vector3d w_x = R0 * RIC[0].transpose() * (frame_j->second.pre_integration->gyr_0 - frame_j->second.pre_integration->linearized_bg);
             R_w_x << 0, -w_x(2), w_x(1),
                     w_x(2), 0, -w_x(0),
                     -w_x(1), w_x(0), 0;
             A.block<3, 3>(i * 3, 0) = exp(-err.segment<3>(i * 3).norm() * 100) * RIC[0] * R0.transpose();
             A.block<3, 3>(i * 3, 3) = exp(-err.segment<3>(i * 3).norm() * 100) * RIC[0] * R0.transpose() * R_w_x;
-            b.segment<3>(i * 3) = exp(-err.segment<3>(i * 3).norm() * 100) * Rs[i].transpose() * Vs[i];
-
+            b.segment<3>(i * 3) = exp(-err.segment<3>(i * 3).norm() * 100) * x.segment<3>(i * 3);
+        //TODO add the cov_inv
         }
         {
-            Vs[all_image_frame.size()-1] = R0 * frame_j->second.R * x.segment<3>((all_image_frame.size()-1) * 3);
-            Rs[all_image_frame.size()-1] = R0 * frame_j->second.R;
             Matrix3d R_w_x;
             Vector3d w_x = R0 * RIC[0].transpose() * (frame_j->second.pre_integration->gyr_1 - frame_j->second.pre_integration->linearized_bg);
             R_w_x << 0, -w_x(2), w_x(1),
@@ -1932,7 +1925,7 @@ void WheelExtrisincInitialize(map<double, ImageFrame> &all_image_frame, MatrixXd
                     -w_x(1), w_x(0), 0;
             A.block<3, 3>((all_image_frame.size()-1) * 3, 0) = exp(-err.segment<3>((all_image_frame.size()-1) * 3).norm() * 100) * RIC[0] * R0.transpose();
             A.block<3, 3>((all_image_frame.size()-1) * 3, 3) = exp(-err.segment<3>((all_image_frame.size()-1) * 3).norm() * 100) * RIC[0] * R0.transpose() * R_w_x;
-            b.segment<3>((all_image_frame.size()-1) * 3) = exp(-err.segment<3>((all_image_frame.size()-1) * 3).norm() * 100) * Rs[all_image_frame.size()-1].transpose() * Vs[all_image_frame.size()-1];
+            b.segment<3>((all_image_frame.size()-1) * 3) = exp(-err.segment<3>((all_image_frame.size()-1) * 3).norm() * 100) * x.segment<3>((all_image_frame.size()-1) * 3);
 
         }
         r_A = A.transpose() * A;
@@ -1943,10 +1936,6 @@ void WheelExtrisincInitialize(map<double, ImageFrame> &all_image_frame, MatrixXd
         ROS_WARN_STREAM("max err     " << err.maxCoeff());
     }
     r_A = r_A.inverse();
-//        for (int i = 0; i <= frame_count; i++)
-//        {
-//            Vb[i] = x_ep.head<3>();
-//        }
 
     Matrix3d tmp_R = Eigen::Quaterniond::FromTwoVectors(x_ep.head<3>(), Vector3d{1,0,0}).toRotationMatrix();
     rio = RIC[0] * R0.transpose() * Utility::ypr2R(Eigen::Vector3d{Utility::R2ypr(tmp_R).x() , 0, 0}).transpose();
@@ -1977,6 +1966,7 @@ bool VisualIMUAlignment(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs,
 //    else{
 //        return LinearAlignment_Joint(all_image_frame, g, x, Bas, Bgs);
         return LinearAlignment(all_image_frame, g, x, Bas);
+//        return LinearAlignment_Stereo(all_image_frame, g, x);
 //    }
 
 }

@@ -123,8 +123,10 @@ class IMUWheelFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9, 3>
                 Eigen::Quaterniond corrected_delta_q = pre_integration->delta_q * Utility::deltaQ(dq_dbg * (Bgi - pre_integration->linearized_bg));
                 jacobian_pose_i.block<3, 3>(O_R, O_R) = -(Utility::Qleft(Qj.inverse() * Qi) * Utility::Qright(corrected_delta_q)).bottomRightCorner<3, 3>();
 #endif
-
-                jacobian_pose_i.block<3, 3>(O_V, O_R) = Utility::skewSymmetric(Qi.inverse() * Qj * RIC[0] * R0.transpose() * (Vbj + R_w_1 * TIO) + Qi.inverse() * G * sum_dt);
+//                if (!STEREO && USE_IMU)
+                    jacobian_pose_i.block<3, 3>(O_V, O_R) = Utility::skewSymmetric(Qi.inverse() * Qj * RIC[0] * R0.transpose() * (Vbj + R_w_1 * TIO) + Qi.inverse() * G * sum_dt);
+//                else
+//                    jacobian_pose_i.block<3, 3>(O_V, O_R) = Utility::skewSymmetric(Qi.inverse() * Qj * RIC[0] * (Vbj + R_w_1 * TIO) + Qi.inverse() * G * sum_dt);
 
                 jacobian_pose_i = sqrt_info * jacobian_pose_i;
 
@@ -139,7 +141,10 @@ class IMUWheelFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9, 3>
             {
                 Eigen::Map<Eigen::Matrix<double, 15, 9, Eigen::RowMajor>> jacobian_speedbias_i(jacobians[1]);
                 jacobian_speedbias_i.setZero();
-                jacobian_speedbias_i.block<3, 3>(O_P, O_V - O_V) = -RIC[0] * R0.transpose() * sum_dt;
+//                if (!STEREO && USE_IMU)
+                    jacobian_speedbias_i.block<3, 3>(O_P, O_V - O_V) = -RIC[0] * R0.transpose() * sum_dt;
+//                else
+//                    jacobian_speedbias_i.block<3, 3>(O_P, O_V - O_V) = -RIC[0] * sum_dt;
                 jacobian_speedbias_i.block<3, 3>(O_P, O_BA - O_V) = -dp_dba;
                 jacobian_speedbias_i.block<3, 3>(O_P, O_BG - O_V) = -dp_dbg;
 
@@ -150,8 +155,10 @@ class IMUWheelFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9, 3>
                 //jacobian_speedbias_i.block<3, 3>(O_R, O_BG - O_V) = -Utility::Qleft(Qj.inverse() * Qi * corrected_delta_q).bottomRightCorner<3, 3>() * dq_dbg;
                 jacobian_speedbias_i.block<3, 3>(O_R, O_BG - O_V) = -Utility::Qleft(Qj.inverse() * Qi * pre_integration->delta_q).bottomRightCorner<3, 3>() * dq_dbg;
 #endif
-
-                jacobian_speedbias_i.block<3, 3>(O_V, O_V - O_V) = -RIC[0] * R0.transpose();
+//                if (!STEREO && USE_IMU)
+                    jacobian_speedbias_i.block<3, 3>(O_V, O_V - O_V) = -RIC[0] * R0.transpose();
+//                else
+//                    jacobian_speedbias_i.block<3, 3>(O_V, O_V - O_V) = -RIC[0];
                 jacobian_speedbias_i.block<3, 3>(O_V, O_BA - O_V) = -dv_dba;
                 jacobian_speedbias_i.block<3, 3>(O_V, O_BG - O_V) = -dv_dbg;
 
@@ -177,8 +184,10 @@ class IMUWheelFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9, 3>
                 Eigen::Quaterniond corrected_delta_q = pre_integration->delta_q * Utility::deltaQ(dq_dbg * (Bgi - pre_integration->linearized_bg));
                 jacobian_pose_j.block<3, 3>(O_R, O_R) = Utility::Qleft(corrected_delta_q.inverse() * Qi.inverse() * Qj).bottomRightCorner<3, 3>();
 #endif
-
-                jacobian_pose_j.block<3, 3>(O_V, O_R) = (Qi.inverse() * Qj).toRotationMatrix() * Utility::skewSymmetric(RIC[0] * R0.transpose() * (Vbj + R_w_1 * TIO));
+//                if (!STEREO && USE_IMU)
+                    jacobian_pose_j.block<3, 3>(O_V, O_R) = -(Qi.inverse() * Qj).toRotationMatrix() * Utility::skewSymmetric(RIC[0] * R0.transpose() * (Vbj + R_w_1 * TIO));
+//                else
+//                    jacobian_pose_j.block<3, 3>(O_V, O_R) = -(Qi.inverse() * Qj).toRotationMatrix() * Utility::skewSymmetric(RIC[0] * (Vbj + R_w_1 * TIO));
 
                 jacobian_pose_j = sqrt_info * jacobian_pose_j;
 
@@ -190,7 +199,10 @@ class IMUWheelFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9, 3>
                 Eigen::Map<Eigen::Matrix<double, 15, 9, Eigen::RowMajor>> jacobian_speedbias_j(jacobians[3]);
                 jacobian_speedbias_j.setZero();
 
-                jacobian_speedbias_j.block<3, 3>(O_V, O_V - O_V) = (Qi.inverse() * Qj).toRotationMatrix() * RIC[0] * R0.transpose();
+//                if (!STEREO && USE_IMU)
+                    jacobian_speedbias_j.block<3, 3>(O_V, O_V - O_V) = (Qi.inverse() * Qj).toRotationMatrix() * RIC[0] * R0.transpose();
+//                else
+//                    jacobian_speedbias_j.block<3, 3>(O_V, O_V - O_V) = (Qi.inverse() * Qj).toRotationMatrix() * RIC[0];
 
                 jacobian_speedbias_j.block<3, 3>(O_BA, O_BA - O_V) = Eigen::Matrix3d::Identity();
 
@@ -206,9 +218,22 @@ class IMUWheelFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9, 3>
                 Eigen::Map<Eigen::Matrix<double, 15, 3, Eigen::RowMajor>> jacobian_tio(jacobians[4]);
                 jacobian_tio.setZero();
 
-                jacobian_tio.block<3, 3>(O_P, O_V - O_V) = -RIC[0] * R0.transpose() * R_w_0 * sum_dt;
+//                if (!STEREO && USE_IMU) {
+                    jacobian_tio.block<3, 3>(O_P, O_V - O_V) = -RIC[0] * R0.transpose() * R_w_0 * sum_dt;
 
-                jacobian_tio.block<3, 3>(O_V, O_V - O_V) = (Qi.inverse() * Qj).toRotationMatrix() * RIC[0] * R0.transpose() * R_w_1 - RIC[0] * R0.transpose() * R_w_0;
+                    jacobian_tio.block<3, 3>(O_V, O_V - O_V) =
+                            (Qi.inverse() * Qj).toRotationMatrix() * RIC[0] * R0.transpose() * R_w_1 -
+                            RIC[0] * R0.transpose() * R_w_0;
+//                }
+//                else {
+//                    jacobian_tio.block<3, 3>(O_P, O_V - O_V) = -RIC[0] * R_w_0 * sum_dt;
+//
+//                    jacobian_tio.block<3, 3>(O_V, O_V - O_V) =
+//                            (Qi.inverse() * Qj).toRotationMatrix() * RIC[0] * R_w_1 -
+//                            RIC[0] * R_w_0;
+//                }
+
+
 
                 jacobian_tio = sqrt_info * jacobian_tio;
 

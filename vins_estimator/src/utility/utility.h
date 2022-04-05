@@ -138,6 +138,8 @@ class Utility
 
     static Eigen::Matrix3d g2R(const Eigen::Vector3d &g);
 
+    static Eigen::Matrix3d g2R_stereo(const Eigen::Vector3d &g);
+
     template <size_t N>
     struct uint_
     {

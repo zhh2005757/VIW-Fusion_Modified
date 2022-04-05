@@ -785,6 +785,29 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         // stereo + IMU initilization
         if(STEREO && USE_IMU)
         {
+            // origin
+            //            f_manager.initFramePoseByPnP(frame_count, Ps, Rs, tic, ric);
+            //            f_manager.triangulate(frame_count, Ps, Rs, tic, ric);
+            //            if (frame_count == WINDOW_SIZE)
+            //            {
+            //                map<double, ImageFrame>::iterator frame_it;
+            //                int i = 0;
+            //                for (frame_it = all_image_frame.begin(); frame_it != all_image_frame.end(); frame_it++)
+            //                {
+            //                    frame_it->second.R = Rs[i];
+            //                    frame_it->second.T = Ps[i];
+            //                    i++;
+            //                }
+            //                solveGyroscopeBias(all_image_frame, Bgs);
+            //                for (int i = 0; i <= WINDOW_SIZE; i++)
+            //                {
+            //                    pre_integrations[i]->repropagate(Vector3d::Zero(), Bgs[i]);
+            //                }
+            //                optimization();
+            //                updateLatestStates();
+            //                solver_flag = NON_LINEAR;
+            //                slideWindow();
+            //                ROS_INFO("Initialization finish!");
             if(checkObservibility()){
                 //第一帧不处理，即先进行下面的三角化，得到3d点后才会开始进行pnp
                 f_manager.initFramePoseByPnP(frame_count, Ps, Rs, tic, ric);
@@ -810,18 +833,23 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
 
                     // Stereo IMU to estimate G
                     VectorXd x;
-                    LinearAlignment_NoVelocity(all_image_frame, g, x);
+//                    LinearAlignment_NoVelocity(all_image_frame, g, x);
+                    LinearAlignment_Stereo(all_image_frame, g, x);
                     R0 = Utility::g2R(g);
+//                    R00 = Utility::g2R_stereo(g);
                     double yaw = Utility::R2ypr(R0 * Rs[0]).x();
+//                    double yaw0 = Utility::R2ypr(R00 * Rs[0]).x();
                     R0 = Utility::ypr2R(Eigen::Vector3d{-yaw , 0, 0}) * R0;
+//                    R00 = Utility::ypr2R(Eigen::Vector3d{-yaw0 , 0, 0}) * R00;
                     g = R0 * g;
                     ROS_WARN_STREAM("g0     " << g.transpose());
                     ROS_WARN_STREAM("R0  " << Utility::R2ypr(R0).transpose());
-//                    for (int i = 0; i <= frame_count; i++)
-//                    {
-//                        Ps[i] = R0 * Ps[i];//t_w_bi
-//                        Rs[i] = R0 * Rs[i];//R_w_bi
-//                    }
+                    for (int i = 0; i <= frame_count; i++)
+                    {
+                        Ps[i] = R0 * Ps[i];//t_w_bi
+                        Rs[i] = R0 * Rs[i];//R_w_bi
+                    }
+                    WheelExtrisincInitialize(all_image_frame, r_A, R0, rio, tio, x);
 
                     optimization();
                     updateLatestStates();
@@ -1411,9 +1439,9 @@ void Estimator::double2vector()
                                            para_Pose[0][5]).toRotationMatrix().transpose();
         }
 
-        tio = Vector3d(para_TIO[0][1],
-                       para_TIO[0][2],
-                       para_TIO[0][3]);
+        tio = Vector3d(para_TIO[0][0],
+                       para_TIO[0][1],
+                       para_TIO[0][2]);
 
         Matrix3d R_w_0;
         Vector3d w_x_0 = R0 * RIC[0].transpose() * (gyr_0 - Bgs[frame_count]);
@@ -1456,16 +1484,18 @@ void Estimator::double2vector()
         }
 
         Matrix3d tmp_R = Eigen::Quaterniond::FromTwoVectors(Vb[0], Eigen::Vector3d{1,0,0}).toRotationMatrix();
-        rio = RIC[0] * R0.transpose() * Utility::ypr2R(Eigen::Vector3d{Utility::R2ypr(tmp_R).x() , 0, 0}).transpose() ;
+        rio = RIC[0] * (Utility::ypr2R(Eigen::Vector3d{Utility::R2ypr(tmp_R).x() , 0, 0}) * R0).transpose() ;
 
 
-//        yaw_test = Utility::R2ypr_m(rio).x();
-//        pitch_test = Utility::R2ypr_m(rio).y();
-//        roll_test = Utility::R2ypr_m(rio).z();
+//        yaw_test = Utility::R2ypr(tmp_R).x();
+//        pitch_test = Utility::R2ypr(tmp_R).y();
+//        roll_test = Utility::R2ypr(tmp_R).z();
         yaw_test = tio.x();
         pitch_test = tio.y();
         roll_test = tio.z();
         ROS_WARN_STREAM("tio     " << tio.transpose());
+        ROS_WARN_STREAM("rio     " << Utility::R2ypr(rio).transpose());
+        ROS_WARN_STREAM("tmp_R   " << Utility::R2ypr(tmp_R).transpose());
     }
     else
     {
@@ -1728,6 +1758,7 @@ void Estimator::optimization()
             if (pre_integrations[j]->sum_dt > 10.0) //两图像帧之间时间过长，不使用中间的预积分
                 continue;
 //            IMUFactor* imu_factor = new IMUFactor(pre_integrations[j]);
+//            problem.AddResidualBlock(imu_factor, NULL, para_Pose[i], para_SpeedBias[i], para_Pose[j], para_SpeedBias[j]);
             IMUWheelFactor* imu_factor = new IMUWheelFactor(pre_integrations[j]);
             problem.AddResidualBlock(imu_factor, NULL, para_Pose[i], para_SpeedBias[i], para_Pose[j], para_SpeedBias[j], para_TIO[0]);
 
@@ -1901,6 +1932,9 @@ void Estimator::optimization()
                 ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(imu_factor, NULL,
                                                                            vector<double *>{para_Pose[0], para_SpeedBias[0], para_Pose[1], para_SpeedBias[1], para_TIO[0]},
                                                                            vector<int>{0, 1});//边缘化 para_Pose[0], para_SpeedBias[0]
+//                ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(imu_factor, NULL,
+//                                                                               vector<double *>{para_Pose[0], para_SpeedBias[0], para_Pose[1], para_SpeedBias[1]},
+//                                                                               vector<int>{0, 1});//边缘化 para_Pose[0], para_SpeedBias[0]
                 marginalization_info->addResidualBlockInfo(residual_block_info);
             }
         }

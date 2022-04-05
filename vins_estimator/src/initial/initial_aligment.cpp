@@ -448,7 +448,7 @@ bool LinearAlignment_Stereo(map<double, ImageFrame> &all_image_frame, Vector3d &
 
         tmp_A.block<3, 3>(0, 0) = -dt * Matrix3d::Identity();
         tmp_A.block<3, 3>(0, 6) = frame_i->second.R.transpose() * dt * dt / 2 * Matrix3d::Identity();
-        tmp_b.block<3, 1>(0, 0) = frame_j->second.pre_integration->delta_p + frame_i->second.R.transpose() * frame_j->second.R * TIC[0] - TIC[0] - frame_i->second.R.transpose() * (frame_j->second.T - frame_i->second.T) ;
+        tmp_b.block<3, 1>(0, 0) = frame_j->second.pre_integration->delta_p - frame_i->second.R.transpose() * (frame_j->second.T - frame_i->second.T) ;
         //cout << "delta_p   " << frame_j->second.pre_integration->delta_p.transpose() << endl;
         tmp_A.block<3, 3>(3, 0) = -Matrix3d::Identity();
         tmp_A.block<3, 3>(3, 3) = frame_i->second.R.transpose() * frame_j->second.R;
@@ -1939,6 +1939,7 @@ void WheelExtrisincInitialize(map<double, ImageFrame> &all_image_frame, MatrixXd
 
     Matrix3d tmp_R = Eigen::Quaterniond::FromTwoVectors(x_ep.head<3>(), Vector3d{1,0,0}).toRotationMatrix();
     rio = RIC[0] * R0.transpose() * Utility::ypr2R(Eigen::Vector3d{Utility::R2ypr(tmp_R).x() , 0, 0}).transpose();
+//    rio = RIC[0] * R0.transpose() * tmp_R.transpose();
     tio = x_ep.tail<3>();
     ROS_WARN_STREAM("rio     " << rio);
     ROS_WARN_STREAM("rio ypr     " << Utility::R2ypr_m(rio).transpose());

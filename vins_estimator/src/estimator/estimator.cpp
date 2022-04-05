@@ -786,35 +786,43 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         if(STEREO && USE_IMU)
         {
             // origin
-            //            f_manager.initFramePoseByPnP(frame_count, Ps, Rs, tic, ric);
-            //            f_manager.triangulate(frame_count, Ps, Rs, tic, ric);
-            //            if (frame_count == WINDOW_SIZE)
-            //            {
-            //                map<double, ImageFrame>::iterator frame_it;
-            //                int i = 0;
-            //                for (frame_it = all_image_frame.begin(); frame_it != all_image_frame.end(); frame_it++)
-            //                {
-            //                    frame_it->second.R = Rs[i];
-            //                    frame_it->second.T = Ps[i];
-            //                    i++;
-            //                }
-            //                solveGyroscopeBias(all_image_frame, Bgs);
-            //                for (int i = 0; i <= WINDOW_SIZE; i++)
-            //                {
-            //                    pre_integrations[i]->repropagate(Vector3d::Zero(), Bgs[i]);
-            //                }
-            //                optimization();
-            //                updateLatestStates();
-            //                solver_flag = NON_LINEAR;
-            //                slideWindow();
-            //                ROS_INFO("Initialization finish!");
-            if(checkObservibility()){
-                //第一帧不处理，即先进行下面的三角化，得到3d点后才会开始进行pnp
-                f_manager.initFramePoseByPnP(frame_count, Ps, Rs, tic, ric);
-                //三角化
-                f_manager.triangulate(frame_count, Ps, Rs, tic, ric);
-                if (frame_count == WINDOW_SIZE)
+//            f_manager.initFramePoseByPnP(frame_count, Ps, Rs, tic, ric);
+//            f_manager.triangulate(frame_count, Ps, Rs, tic, ric);
+//            if (frame_count == WINDOW_SIZE)
+//            {
+//                map<double, ImageFrame>::iterator frame_it;
+//                int i = 0;
+//                for (frame_it = all_image_frame.begin(); frame_it != all_image_frame.end(); frame_it++)
+//                {
+//                    frame_it->second.R = Rs[i];
+//                    frame_it->second.T = Ps[i];
+//                    i++;
+//                }
+//                solveGyroscopeBias(all_image_frame, Bgs);
+//                for (int i = 0; i <= WINDOW_SIZE; i++)
+//                {
+//                    pre_integrations[i]->repropagate(Vector3d::Zero(), Bgs[i]);
+//                }
+//                optimization();
+//                updateLatestStates();
+//                solver_flag = NON_LINEAR;
+//                slideWindow();
+//                ROS_INFO("Initialization finish!");
+
+            if (frame_count == WINDOW_SIZE)
+            {
+                bool result = false;
+                if(ESTIMATE_EXTRINSIC != 2 && ESTIMATE_EXTRINSIC_WHEEL != 2 && (header - initial_timestamp) > 0.1)
                 {
+                    result = initialStructure();
+                    initial_timestamp = header;
+                }
+                if(result)
+                {
+                    //第一帧不处理，即先进行下面的三角化，得到3d点后才会开始进行pnp
+                    f_manager.initFramePoseByPnP(frame_count, Ps, Rs, tic, ric);
+                    //三角化
+                    f_manager.triangulate(frame_count, Ps, Rs, tic, ric);
                     map<double, ImageFrame>::iterator frame_it;
                     int i = 0;
                     for (frame_it = all_image_frame.begin(); frame_it != all_image_frame.end(); frame_it++)
@@ -823,33 +831,32 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
                         frame_it->second.T = Ps[i];
                         i++;
                     }
-                    ROS_WARN_STREAM("Stereo Ps[1]: " << Ps[1]-Ps[0]);
 
-                    solveGyroscopeBias(all_image_frame, Bgs);
-                    for (int i = 0; i <= WINDOW_SIZE; i++)
-                    {
-                        pre_integrations[i]->repropagate(Vector3d::Zero(), Bgs[i]);
-                    }
-
-                    // Stereo IMU to estimate G
                     VectorXd x;
-//                    LinearAlignment_NoVelocity(all_image_frame, g, x);
+
                     LinearAlignment_Stereo(all_image_frame, g, x);
-                    R0 = Utility::g2R(g);
-//                    R00 = Utility::g2R_stereo(g);
-                    double yaw = Utility::R2ypr(R0 * Rs[0]).x();
-//                    double yaw0 = Utility::R2ypr(R00 * Rs[0]).x();
-                    R0 = Utility::ypr2R(Eigen::Vector3d{-yaw , 0, 0}) * R0;
-//                    R00 = Utility::ypr2R(Eigen::Vector3d{-yaw0 , 0, 0}) * R00;
-                    g = R0 * g;
-                    ROS_WARN_STREAM("g0     " << g.transpose());
-                    ROS_WARN_STREAM("R0  " << Utility::R2ypr(R0).transpose());
-                    for (int i = 0; i <= frame_count; i++)
-                    {
-                        Ps[i] = R0 * Ps[i];//t_w_bi
-                        Rs[i] = R0 * Rs[i];//R_w_bi
-                    }
+
                     WheelExtrisincInitialize(all_image_frame, r_A, R0, rio, tio, x);
+
+                    map<double, ImageFrame>::iterator frame_i;
+                    map<double, ImageFrame>::iterator frame_j;
+                    int kv = -1;
+                    for (frame_i = all_image_frame.begin(); next(frame_i) != all_image_frame.end(); frame_i++)
+                    {
+                        frame_j= next(frame_i);
+                        double dt = frame_j->second.pre_integration->sum_dt;
+                        if(frame_i->second.is_key_frame)
+                        {
+                            kv++;
+                            Matrix3d R_w_x;
+                            Vector3d w_x = R0 * RIC[0].transpose() * (frame_j->second.pre_integration->linearized_gyr - frame_j->second.pre_integration->linearized_bg);
+                            R_w_x << 0, -w_x(2), w_x(1),
+                                    w_x(2), 0, -w_x(0),
+                                    -w_x(1), w_x(0), 0;
+                            // update initial Vb
+                            Vb[kv] = (Rs[kv] * RIC[0] * R0.transpose()).transpose() * Vs[kv] - R_w_x * tio;
+                        }
+                    }
 
                     optimization();
                     updateLatestStates();
@@ -857,9 +864,9 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
                     slideWindow();
                     ROS_INFO("Initialization finish!");
                 }
+                else
+                    slideWindow();
             }
-            else
-                slideWindow();
         }
 
         // stereo only initilization
@@ -1484,15 +1491,16 @@ void Estimator::double2vector()
         }
 
         Matrix3d tmp_R = Eigen::Quaterniond::FromTwoVectors(Vb[0], Eigen::Vector3d{1,0,0}).toRotationMatrix();
-        rio = RIC[0] * (Utility::ypr2R(Eigen::Vector3d{Utility::R2ypr(tmp_R).x() , 0, 0}) * R0).transpose() ;
+        rio = RIC[0] * (Utility::ypr2R(Eigen::Vector3d{Utility::R2ypr(tmp_R).x() , 0, 0}) * R0).transpose();
+//        rio = RIC[0] * (tmp_R * R0).transpose();
 
 
-//        yaw_test = Utility::R2ypr(tmp_R).x();
-//        pitch_test = Utility::R2ypr(tmp_R).y();
-//        roll_test = Utility::R2ypr(tmp_R).z();
-        yaw_test = tio.x();
-        pitch_test = tio.y();
-        roll_test = tio.z();
+        yaw_test = Utility::R2ypr(rio).x();
+        pitch_test = Utility::R2ypr(rio).y();
+        roll_test = Utility::R2ypr(rio).z();
+//        yaw_test = tio.x();
+//        pitch_test = tio.y();
+//        roll_test = tio.z();
         ROS_WARN_STREAM("tio     " << tio.transpose());
         ROS_WARN_STREAM("rio     " << Utility::R2ypr(rio).transpose());
         ROS_WARN_STREAM("tmp_R   " << Utility::R2ypr(tmp_R).transpose());

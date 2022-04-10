@@ -49,8 +49,13 @@ extern std::vector<Eigen::Vector3d> TIC;
 extern Eigen::Matrix3d RIO;
 extern Eigen::Vector3d TIO;
 extern Eigen::Matrix3d R0;
+extern Eigen::VectorXd x_ep;
+extern double ff;
 
 extern Eigen::Vector3d G;
+extern Eigen::Vector3d g;
+extern Eigen::MatrixXd B;
+extern Eigen::Vector2d delta_g;
 
 extern double BIAS_ACC_THRESHOLD;
 extern double BIAS_GYR_THRESHOLD;
@@ -105,7 +110,7 @@ enum SIZE_PARAMETERIZATION
     SIZE_ROTATION = 4,
     SIZE_SPEEDBIAS = 9,
     SIZE_FEATURE = 1,
-    SIZE_EP = 3,
+    SIZE_G = 2,
     SIZE_TIO = 3
 };
 

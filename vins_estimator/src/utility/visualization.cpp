@@ -282,9 +282,9 @@ void pubOdometry(const Estimator &estimator, const std_msgs::Header &header)
 //        odometry.twist.twist.linear.x = estimator.Vs[WINDOW_SIZE].x();
 //        odometry.twist.twist.linear.y = estimator.Vs[WINDOW_SIZE].y();
 //        odometry.twist.twist.linear.z = estimator.Vs[WINDOW_SIZE].z();
-//        odometry.twist.twist.linear.x = estimator.Vb[WINDOW_SIZE].x();
-//        odometry.twist.twist.linear.y = estimator.Vb[WINDOW_SIZE].y();
-//        odometry.twist.twist.linear.z = estimator.Vb[WINDOW_SIZE].z();
+//        odometry.twist.twist.linear.x = estimator.Bas[WINDOW_SIZE].x();
+//        odometry.twist.twist.linear.y = estimator.Bas[WINDOW_SIZE].y();
+//        odometry.twist.twist.linear.z = estimator.Bas[WINDOW_SIZE].z();
         odometry.twist.twist.linear.x = estimator.yaw_test;
         odometry.twist.twist.linear.y = estimator.pitch_test;
         odometry.twist.twist.linear.z = estimator.roll_test;

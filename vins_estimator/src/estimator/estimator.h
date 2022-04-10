@@ -29,8 +29,8 @@
 #include "../initial/initial_sfm.h"
 #include "../initial/initial_alignment.h"
 #include "../initial/initial_ex_rotation.h"
-//#include "../factor/imu_factor.h"
-#include "../factor/imu_wheel_factor.h"
+#include "../factor/imu_factor.h"
+//#include "../factor/imu_wheel_factor.h"
 #include "../factor/plane_factor.h"
 #include "../factor/wheel_factor.h"
 #include "../factor/pose_local_parameterization.h"
@@ -66,9 +66,9 @@ class Estimator
 
     // internal
     void clearState();
-    bool checkObservibility();  //2022.02.28
-    // bool checkObservibility_x();  //2022.02.25
-    // bool checkObservibility_w();  //2022.02.25
+    bool checkObservibility();
+    bool checkLine();
+
     bool initialStructure();
     bool visualInitialAlign();
     bool relativePose(Matrix3d &relative_R, Vector3d &relative_T, int &l);
@@ -137,7 +137,7 @@ class Estimator
     SolverFlag solver_flag;
     MarginalizationFlag  marginalization_flag;
     bool bgSolver = false;
-    Vector3d g;
+//    Vector3d g;
 
     Matrix3d ric[2]; //存储双目与imu之间的外参 ric[0] = R_i_cl; ric[1] = R_i_cr;
     Vector3d tic[2]; //tic[0] = t_i_cl; tic[1] = t_i_cr;
@@ -199,7 +199,7 @@ class Estimator
 
     double para_Pose[WINDOW_SIZE + 1][SIZE_POSE];
     double para_SpeedBias[WINDOW_SIZE + 1][SIZE_SPEEDBIAS];
-    double para_EP[WINDOW_SIZE + 1][SIZE_EP];
+    double para_Gravity[WINDOW_SIZE + 1][SIZE_G];
     double para_TIO[WINDOW_SIZE + 1][SIZE_TIO];
     double para_Feature[NUM_OF_F][SIZE_FEATURE];
     double para_Ex_Pose[2][SIZE_POSE];
@@ -242,5 +242,7 @@ class Estimator
     double yaw_test, pitch_test, roll_test;
     Matrix3d R00;
     MatrixXd r_A;
-    VectorXd x_ep;
+    MatrixXd r_A_tio;
+    vector<double> yaw_sum_vec;
+    Matrix3d tmp_R;
 };

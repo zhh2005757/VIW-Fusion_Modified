@@ -332,7 +332,7 @@ bool LinearAlignment(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vect
     (x.tail<4>())(0) = s;
     ROS_WARN_STREAM("refine scale: %f " << s);
 //    ROS_WARN_STREAM(" refine  g   " << g.norm() << " " << g.transpose());
-    if(s < 0.0 )
+    if(s < 0.1 )
         return false;
     else
         return true;
@@ -1892,14 +1892,17 @@ bool VisualIMUAlignment(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs,
 */
 
 void WheelExtrisincInitialize(map<double, ImageFrame> &all_image_frame, MatrixXd &r_A, Matrix3d &R0, Matrix3d &rio, Vector3d &tio, VectorXd &x){
-
+    ROS_WARN_STREAM("all_image_frame size: " << all_image_frame.size());
     MatrixXd A{(all_image_frame.size() ) * 3, 6};
     A.setZero();
     VectorXd b{(all_image_frame.size() )* 3};
     b.setZero();
     VectorXd err{all_image_frame.size() * 3 };
     err.setZero();
-    VectorXd x_ep;
+    MatrixXd cov{(all_image_frame.size() ) * 3, (all_image_frame.size() ) * 3};
+    cov.setZero();
+    MatrixXd tls_A{(all_image_frame.size() ) * 3, 7};
+    Matrix<double, 6, 1> x_tls;
     for (int n=0;n<1;n++) {
         map<double, ImageFrame>::iterator frame_i;
         map<double, ImageFrame>::iterator frame_j;
@@ -1907,6 +1910,7 @@ void WheelExtrisincInitialize(map<double, ImageFrame> &all_image_frame, MatrixXd
         int i = 0;
         for (frame_i = all_image_frame.begin(); next(frame_i) != all_image_frame.end(); frame_i++, i++ ) {
             frame_j = next(frame_i);
+            double dt = frame_j->second.pre_integration->sum_dt;
             Matrix3d R_w_x;
             Vector3d w_x = R0 * RIC[0].transpose() * (frame_j->second.pre_integration->gyr_0 - frame_j->second.pre_integration->linearized_bg);
             R_w_x << 0, -w_x(2), w_x(1),
@@ -1915,36 +1919,57 @@ void WheelExtrisincInitialize(map<double, ImageFrame> &all_image_frame, MatrixXd
             A.block<3, 3>(i * 3, 0) = exp(-err.segment<3>(i * 3).norm() * 100) * RIC[0] * R0.transpose();
             A.block<3, 3>(i * 3, 3) = exp(-err.segment<3>(i * 3).norm() * 100) * RIC[0] * R0.transpose() * R_w_x;
             b.segment<3>(i * 3) = exp(-err.segment<3>(i * 3).norm() * 100) * x.segment<3>(i * 3);
-        //TODO add the cov_inv
+            cov.block<3, 3>(i * 3, i * 3) = frame_j->second.pre_integration->covariance.block<3, 3>(0, 0)/ (dt * dt);
         }
         {
             Matrix3d R_w_x;
             Vector3d w_x = R0 * RIC[0].transpose() * (frame_j->second.pre_integration->gyr_1 - frame_j->second.pre_integration->linearized_bg);
+            double dt = frame_j->second.pre_integration->sum_dt;
             R_w_x << 0, -w_x(2), w_x(1),
                     w_x(2), 0, -w_x(0),
                     -w_x(1), w_x(0), 0;
             A.block<3, 3>((all_image_frame.size()-1) * 3, 0) = exp(-err.segment<3>((all_image_frame.size()-1) * 3).norm() * 100) * RIC[0] * R0.transpose();
             A.block<3, 3>((all_image_frame.size()-1) * 3, 3) = exp(-err.segment<3>((all_image_frame.size()-1) * 3).norm() * 100) * RIC[0] * R0.transpose() * R_w_x;
             b.segment<3>((all_image_frame.size()-1) * 3) = exp(-err.segment<3>((all_image_frame.size()-1) * 3).norm() * 100) * x.segment<3>((all_image_frame.size()-1) * 3);
-
+            cov.block<3, 3>((all_image_frame.size()-1) * 3, (all_image_frame.size()-1) * 3) = frame_j->second.pre_integration->covariance.block<3, 3>(0, 0)/ (dt * dt);
         }
-        r_A = A.transpose() * A;
-        VectorXd r_b = A.transpose() * b;
+        MatrixXd cov_inv = cov.inverse();
+//        MatrixXd cov_inv = ((ACC_N * ACC_N) * cov.setIdentity()).inverse();
+//        MatrixXd cov_inv = cov.setIdentity();
+        r_A = A.transpose() * cov_inv * A;
+        VectorXd r_b = A.transpose() * cov_inv * b;
         x_ep = r_A.ldlt().solve(r_b);
         err = (A * x_ep - b).cwiseAbs();
 //            ROS_WARN_STREAM("err     " << err);
         ROS_WARN_STREAM("max err     " << err.maxCoeff());
+
+        // tls solving
+//        tls_A << A,b;
+//        JacobiSVD<MatrixXd> svd(tls_A, ComputeFullU | ComputeFullV);
+//        x_tls = -svd.matrixV().row(6).head<6>() / (svd.matrixV().row(6).tail<1>()(0));
     }
     r_A = r_A.inverse();
 
     Matrix3d tmp_R = Eigen::Quaterniond::FromTwoVectors(x_ep.head<3>(), Vector3d{1,0,0}).toRotationMatrix();
-    rio = RIC[0] * R0.transpose() * Utility::ypr2R(Eigen::Vector3d{Utility::R2ypr(tmp_R).x() , 0, 0}).transpose();
-//    rio = RIC[0] * R0.transpose() * tmp_R.transpose();
+
+    // tls solving
+//    Matrix3d tls_R = Eigen::Quaterniond::FromTwoVectors(x_tls.head<3>(), Vector3d{1,0,0}).toRotationMatrix();
+
+
+//    rio = RIC[0] * R0.transpose() * Utility::ypr2R(Eigen::Vector3d{Utility::R2ypr(tmp_R).x() , 0, 0}).transpose();
+    rio = RIC[0] * R0.transpose() * tmp_R.transpose();
     tio = x_ep.tail<3>();
     ROS_WARN_STREAM("rio     " << rio);
     ROS_WARN_STREAM("rio ypr     " << Utility::R2ypr_m(rio).transpose());
-    ROS_WARN_STREAM("tio     " << tio.transpose());
+    ROS_WARN_STREAM("tio     " << (rio.transpose() * tio).transpose());
 
+    // tls solving
+//    ROS_WARN_STREAM("rio tls     " << RIC[0] * R0.transpose() * tls_R.transpose());
+//    ROS_WARN_STREAM("rio tls ypr     " << Utility::R2ypr_m(RIC[0] * R0.transpose() * tls_R.transpose()).transpose());
+//    ROS_WARN_STREAM("tio tls    " << x_tls.tail<3>().transpose());
+
+    r_A = 100000 * MatrixXd::Identity(6, 6);
+    x_ep.setZero();
 }
 
 bool VisualIMUAlignment(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs, Vector3d &g, VectorXd &x, Vector3d &wheel_s, Vector3d* Bas)

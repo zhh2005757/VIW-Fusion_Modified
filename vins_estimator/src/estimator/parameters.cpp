@@ -29,8 +29,13 @@ std::vector<Eigen::Vector3d> TIC;
 Eigen::Matrix3d RIO;
 Eigen::Vector3d TIO;
 Eigen::Matrix3d R0;
+Eigen::VectorXd x_ep;
+double ff;
 
 Eigen::Vector3d G{0.0, 0.0, 9.8};
+Eigen::Vector3d g{0.0, 0.0, 9.8};
+Eigen::MatrixXd B {3,2};
+Eigen::Vector2d delta_g;
 
 double BIAS_ACC_THRESHOLD;
 double BIAS_GYR_THRESHOLD;
@@ -434,4 +439,6 @@ void readParameters(std::string config_file)
     fsSettings.release();
 
     R0 = Eigen::Matrix3d::Identity();
+    x_ep.setZero();
+    ff = 1.0;
 }

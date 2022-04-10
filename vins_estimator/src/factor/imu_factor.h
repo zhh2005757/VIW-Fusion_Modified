@@ -20,7 +20,7 @@
 #include <ceres/gradient_checker.h>
 #include "pose_local_parameterization.h"
 
-class IMUFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9>
+class IMUFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9, 2>
 {
   public:
     IMUFactor() = delete;
@@ -43,6 +43,8 @@ class IMUFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9>
         Eigen::Vector3d Vj(parameters[3][0], parameters[3][1], parameters[3][2]);
         Eigen::Vector3d Baj(parameters[3][3], parameters[3][4], parameters[3][5]);
         Eigen::Vector3d Bgj(parameters[3][6], parameters[3][7], parameters[3][8]);
+
+        Eigen::Vector2d delta_g(parameters[4][0], parameters[4][1]);
 
 //Eigen::Matrix<double, 15, 15> Fd;
 //Eigen::Matrix<double, 15, 12> Gd;
@@ -70,7 +72,7 @@ class IMUFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9>
 
         Eigen::Map<Eigen::Matrix<double, 15, 1>> residual(residuals);
         residual = pre_integration->evaluate(Pi, Qi, Vi, Bai, Bgi,
-                                            Pj, Qj, Vj, Baj, Bgj);
+                                            Pj, Qj, Vj, Baj, Bgj, delta_g);
 
         Eigen::Matrix<double, 15, 15> sqrt_info = Eigen::LLT<Eigen::Matrix<double, 15, 15>>(pre_integration->covariance.inverse()).matrixL().transpose();
         //sqrt_info.setIdentity();
@@ -95,6 +97,8 @@ class IMUFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9>
                 //std::cout << pre_integration->jacobian << std::endl;
 ///                ROS_BREAK();
             }
+
+            Vector3d G = g + B * delta_g;
 
             if (jacobians[0])
             {
@@ -182,6 +186,20 @@ class IMUFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9>
                 jacobian_speedbias_j.block<3, 3>(O_BG, O_BG - O_V) = Eigen::Matrix3d::Identity();
 
                 jacobian_speedbias_j = sqrt_info * jacobian_speedbias_j;
+
+                //ROS_ASSERT(fabs(jacobian_speedbias_j.maxCoeff()) < 1e8);
+                //ROS_ASSERT(fabs(jacobian_speedbias_j.minCoeff()) < 1e8);
+            }
+            if (jacobians[4])
+            {
+                Eigen::Map<Eigen::Matrix<double, 15, 2, Eigen::RowMajor>> jacobian_gravity(jacobians[4]);
+                jacobian_gravity.setZero();
+
+                jacobian_gravity.block<3, 2>(O_P, O_V - O_V) = 0.5 * Qi.inverse().toRotationMatrix() * B * sum_dt * sum_dt;
+
+                jacobian_gravity.block<3, 2>(O_V, O_V - O_V) = Qi.inverse().toRotationMatrix() * B * sum_dt;
+
+                jacobian_gravity = sqrt_info * jacobian_gravity;
 
                 //ROS_ASSERT(fabs(jacobian_speedbias_j.maxCoeff()) < 1e8);
                 //ROS_ASSERT(fabs(jacobian_speedbias_j.minCoeff()) < 1e8);

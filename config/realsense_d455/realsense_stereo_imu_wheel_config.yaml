@@ -3,8 +3,8 @@
 #common parameters
 #support: 1 imu 1 cam; 1 imu 2 cam: 2 cam; 
 imu: 1  
-wheel: 0
-only_initial_with_wheel: 0 #只利用wheel进行初始化，不加入因子图
+wheel: 1
+only_initial_with_wheel: 1 #只利用wheel进行初始化，不加入因子图
 plane: 0
 num_of_cam: 1
 
@@ -68,7 +68,7 @@ body_T_wheel: !!opencv-matrix
   rows: 4
   cols: 4
   dt: d
-  #data: [0,-1,0,-0.013,
+  #data: [0,-1,0,0.013,
   #       0,0,-1,0.0,
   #       1,0,0,-0.14,
   #       0,0,0,1]
@@ -85,10 +85,10 @@ body_T_wheel: !!opencv-matrix
   #      -0.0741633, -0.0442258,  -0.996265,  0.0,
   #      0.960336,   0.266111, -0.0833018,-0.14,
   #      0,0,0,1]
-  # EP frome RLS 
-  data: [0.0515836,  -0.998615, -0.0103316,0.180956,
-        -0.0444665, 0.00803843,  -0.998979, 0.0404203,
-         0.997678,  0.0519903, -0.0439902,0.120054,
+  # EP scout2
+  data: [0.0513279,   -0.998651, -0.00783981,0,
+         -0.0419753,  0.00568593,   -0.999102, 0,
+         0.997799,   0.0516109,  -0.0416269, 0,
         0,0,0,1]
 
 #plane noise
@@ -144,7 +144,7 @@ sw: 1.0
 estimate_td: 0                     # online estimate time offset between camera and imu
 td: 0.00393                             # initial value of time offset. unit: s. readed image clock + td = real image clock (IMU clock)
 
-estimate_td_wheel: 1                      # online estimate time offset between camera and wheel
+estimate_td_wheel: 0                      # online estimate time offset between camera and wheel
 td_wheel: 0.008  
 
 #loop closure parameters

@@ -20,6 +20,8 @@
 #include <eigen3/Eigen/Dense>
 #include <eigen3/Eigen/Geometry>
 #include <vector>
+#include <ctime>
+#include <list>
 
 #include "parameters.h"
 #include "feature_manager.h"
@@ -67,6 +69,7 @@ class Estimator
     // internal
     void clearState();
     bool checkObservibility();
+    bool checkObservibility_wheel();
     bool checkLine();
 
     bool initialStructure();
@@ -143,6 +146,7 @@ class Estimator
     Vector3d tic[2]; //tic[0] = t_i_cl; tic[1] = t_i_cr;
     Matrix3d rio;
     Vector3d tio;
+    Matrix3d rwg;
 
     //平面参数
     Matrix3d rpw;
@@ -199,7 +203,7 @@ class Estimator
 
     double para_Pose[WINDOW_SIZE + 1][SIZE_POSE];
     double para_SpeedBias[WINDOW_SIZE + 1][SIZE_SPEEDBIAS];
-    double para_Gravity[WINDOW_SIZE + 1][SIZE_G];
+    double para_Gravity[1][SIZE_G];
     double para_TIO[WINDOW_SIZE + 1][SIZE_TIO];
     double para_Feature[NUM_OF_F][SIZE_FEATURE];
     double para_Ex_Pose[2][SIZE_POSE];
@@ -240,9 +244,22 @@ class Estimator
 
     //public test variable
     double yaw_test, pitch_test, roll_test;
+    double x_test, y_test, z_test;
     Matrix3d R00;
     MatrixXd r_A;
     MatrixXd r_A_tio;
-    vector<double> yaw_sum_vec;
+    list<double> yaw_sum_vec;
     Matrix3d tmp_R;
+    Vector3d g_init;
+    map<double, ImageFrame> all_image_frame_init;
+    map<double, ImageFrame> all_image_frame_init_now;
+    double yaw;
+    bool line_start= false;
+    bool line_end = false;
+    bool corner_start = false;
+    bool corner_end = false;
+    bool rio_finish = false;
+    const time_t now = time(0);
+    queue<Eigen::Vector3d> angular_buf;
+    double angular_v_sum = 0.0;
 };

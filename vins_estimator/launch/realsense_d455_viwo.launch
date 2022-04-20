@@ -3,4 +3,5 @@
     <node name="vins_estimator" pkg="vins" type="viwo_node" output="screen" args="/home/zhh2005757/viwo_ws/src/VIW-Fusion/config/realsense_d455/realsense_stereo_imu_wheel_config.yaml"  />
 <!--    <node name="vins_estimator" pkg="vins" type="viwo_node" output="screen" args="/home/zhh2005757/viwo_ws/src/VIW-Fusion/config/realsense_d455/realsense_stereo_imu_wheel_config.yaml" launch-prefix="gdb -ex run -args" />-->
 <!--    <node name="loop_fusion" pkg="loop_fusion" type="loop_fusion_node" output="screen" args="/home/td/slam/vins_fusion_ws/src/VINS-Fusion/config/realsense_d435i/realsense_stereo_imu_config_ridgeback.yaml" />-->
+    <node name="rqtplot" pkg="rqt_plot" type="rqt_plot" output="log" args="" />
 </launch>

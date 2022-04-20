@@ -285,9 +285,12 @@ void pubOdometry(const Estimator &estimator, const std_msgs::Header &header)
 //        odometry.twist.twist.linear.x = estimator.Bas[WINDOW_SIZE].x();
 //        odometry.twist.twist.linear.y = estimator.Bas[WINDOW_SIZE].y();
 //        odometry.twist.twist.linear.z = estimator.Bas[WINDOW_SIZE].z();
-        odometry.twist.twist.linear.x = estimator.yaw_test;
-        odometry.twist.twist.linear.y = estimator.pitch_test;
-        odometry.twist.twist.linear.z = estimator.roll_test;
+        odometry.twist.twist.linear.x = estimator.x_test;
+        odometry.twist.twist.linear.y = estimator.y_test;
+        odometry.twist.twist.linear.z = estimator.z_test;
+//        odometry.twist.twist.linear.x = estimator.yaw_test;
+//        odometry.twist.twist.linear.y = estimator.pitch_test;
+//        odometry.twist.twist.linear.z = estimator.roll_test;
         pub_odometry.publish(odometry);
 
         geometry_msgs::PoseStamped pose_stamped;
@@ -333,9 +336,37 @@ void pubOdometry(const Estimator &estimator, const std_msgs::Header &header)
               << pose_stamped.pose.orientation.y << " "
               << pose_stamped.pose.orientation.z << " "
               << pose_stamped.pose.orientation.w << std::endl;
+        foutC.close();
         auto tmp_T = pose_stamped.pose.position;
         printf("time: %f, t: %f %f %f q: %f %f %f %f \n", header.stamp.toSec(), tmp_T.x, tmp_T.y, tmp_T.z,
                tmp_Q.w(), tmp_Q.x(), tmp_Q.y(), tmp_Q.z());
+
+
+        if (estimator.line_start) {
+            // write result to file --RIO
+            ofstream foutC(OUTPUT_FOLDER + "/calib_rio_" + to_string(estimator.now) + ".csv", ios::app);
+            foutC.setf(ios::fixed, ios::floatfield);
+            foutC << std::setprecision(0)
+                  << header.stamp.toSec() * 1e9 << ","
+                  << std::setprecision(9)
+                  << estimator.yaw_test << ","
+                  << estimator.pitch_test << ","
+                  << estimator.roll_test << ","
+                  << std::endl;
+            foutC.close();
+        }else {
+            // write result to file --TIO
+            ofstream foutC(OUTPUT_FOLDER + "/calib_tio_" + to_string(estimator.now) + ".csv", ios::app);
+            foutC.setf(ios::fixed, ios::floatfield);
+            foutC << std::setprecision(0)
+                  << header.stamp.toSec() * 1e9 << ","
+                  << std::setprecision(9)
+                  << estimator.x_test << ","
+                  << estimator.y_test << ","
+                  << estimator.z_test << ","
+                  << std::endl;
+            foutC.close();
+        }
 
     }
 }
@@ -416,7 +447,7 @@ void pubGroundTruth(Estimator &estimator, const std_msgs::Header &header, Eigen:
 //              << estimator.Vs[WINDOW_SIZE].x() << ","
 //              << estimator.Vs[WINDOW_SIZE].y() << ","
 //              << estimator.Vs[WINDOW_SIZE].z() << "," << endl;
-//        foutC.close();
+        foutC.close();
 //        Eigen::Vector3d tmp_T = estimator.Ps[WINDOW_SIZE];
 //        printf("time: %f, t: %f %f %f q: %f %f %f %f \n", header.stamp.toSec(), tmp_T.x(), tmp_T.y(), tmp_T.z(),
 //               tmp_Q.w(), tmp_Q.x(), tmp_Q.y(), tmp_Q.z());

@@ -59,6 +59,7 @@ add_library(vins_lib
         src/factor/pose_subset_parameterization.cpp
         src/factor/orientation_local_parameterization.cpp
         src/factor/orientation_subset_parameterization.cpp
+        src/factor/Rwg_SO3_local_parameterization.cpp
         src/factor/projectionTwoFrameOneCamFactor.cpp
         src/factor/projectionTwoFrameTwoCamFactor.cpp
         src/factor/projectionOneFrameTwoCamFactor.cpp

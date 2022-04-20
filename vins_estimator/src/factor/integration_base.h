@@ -168,7 +168,7 @@ class IntegrationBase
 
     Eigen::Matrix<double, 15, 1> evaluate(const Eigen::Vector3d &Pi, const Eigen::Quaterniond &Qi, const Eigen::Vector3d &Vi, const Eigen::Vector3d &Bai, const Eigen::Vector3d &Bgi,
                                           const Eigen::Vector3d &Pj, const Eigen::Quaterniond &Qj, const Eigen::Vector3d &Vj, const Eigen::Vector3d &Baj, const Eigen::Vector3d &Bgj,
-                                          const Eigen::Vector2d &delta_g)
+                                          const Eigen::Quaterniond &Rwg)
     {
         Eigen::Matrix<double, 15, 1>residuals;
 
@@ -187,11 +187,11 @@ class IntegrationBase
         Eigen::Vector3d corrected_delta_v = delta_v + dv_dba * dba + dv_dbg * dbg;
         Eigen::Vector3d corrected_delta_p = delta_p + dp_dba * dba + dp_dbg * dbg;
 
-        B = TangentBasis(g);
+//        B = TangentBasis(g);
 
-        residuals.block<3, 1>(O_P, 0) = Qi.inverse() * (0.5 * (g + B * delta_g) * sum_dt * sum_dt + Pj - Pi - Vi * sum_dt) - corrected_delta_p;
+        residuals.block<3, 1>(O_P, 0) = Qi.inverse() * (0.5 * (Rwg * g) * sum_dt * sum_dt + Pj - Pi - Vi * sum_dt) - corrected_delta_p;
         residuals.block<3, 1>(O_R, 0) = 2 * (corrected_delta_q.inverse() * (Qi.inverse() * Qj)).vec();
-        residuals.block<3, 1>(O_V, 0) = Qi.inverse() * ((g + B * delta_g) * sum_dt + Vj - Vi) - corrected_delta_v;
+        residuals.block<3, 1>(O_V, 0) = Qi.inverse() * (Rwg * g * sum_dt + Vj - Vi) - corrected_delta_v;
         residuals.block<3, 1>(O_BA, 0) = Baj - Bai;
         residuals.block<3, 1>(O_BG, 0) = Bgj - Bgi;
         return residuals;

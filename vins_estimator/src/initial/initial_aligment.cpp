@@ -175,7 +175,7 @@ MatrixXd TangentBasis(Vector3d &g0)
     return bc;
 }
 
-void RefineGravity(map<double, ImageFrame> &all_image_frame, Vector3d &g, VectorXd &x, Vector3d* Bas)
+void RefineGravity(map<double, ImageFrame> &all_image_frame, Vector3d &g, VectorXd &x)
 {
     Vector3d g0 = g.normalized() * G.norm();
     Vector3d lx, ly;
@@ -259,7 +259,7 @@ void RefineGravity(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vector
 
 }
 
-bool LinearAlignment(map<double, ImageFrame> &all_image_frame, Vector3d &g, VectorXd &x, Vector3d* Bas)
+bool LinearAlignment(map<double, ImageFrame> &all_image_frame, Vector3d &g, VectorXd &x)
 {
     int all_frame_count = all_image_frame.size();
     int n_state = all_frame_count * 3 + 3 + 1;
@@ -327,7 +327,7 @@ bool LinearAlignment(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vect
         return false;
     }
 
-    RefineGravity(all_image_frame, g, x, Bas);
+    RefineGravity(all_image_frame, g, x);
     s = (x.tail<4>())(0) / 100.0;
     (x.tail<4>())(0) = s;
     ROS_WARN_STREAM("refine scale: %f " << s);
@@ -671,8 +671,8 @@ bool LinearAlignment_Joint(map<double, ImageFrame> &all_image_frame, Vector3d &g
         Vector3d delta_ba = x.tail<3>();
         ROS_WARN_STREAM("delta_ba " << delta_ba.transpose());
 
-        if (delta_ba.norm() > 0.2)
-            return false;
+//        if (delta_ba.norm() > 0.2)
+//            return false;
 
         for (int i = 0; i <= WINDOW_SIZE; i++) {
             Bgs[i] += delta_bg;
@@ -693,7 +693,7 @@ bool LinearAlignment_Joint(map<double, ImageFrame> &all_image_frame, Vector3d &g
             frame_j->second.pre_integration->repropagate(Bas[0], Vector3d::Zero());
         }
 
-    if(s < 0.1 )
+    if(s < 0.5 )
         return false;
     else {
         return true;
@@ -1917,9 +1917,10 @@ void WheelExtrisincInitialize(map<double, ImageFrame> &all_image_frame, MatrixXd
                     w_x(2), 0, -w_x(0),
                     -w_x(1), w_x(0), 0;
             A.block<3, 3>(i * 3, 0) = exp(-err.segment<3>(i * 3).norm() * 100) * RIC[0] * R0.transpose();
-            A.block<3, 3>(i * 3, 3) = exp(-err.segment<3>(i * 3).norm() * 100) * RIC[0] * R0.transpose() * R_w_x;
+            A.block<3, 3>(i * 3, 3) = -exp(-err.segment<3>(i * 3).norm() * 100) * RIC[0] * R0.transpose() * R_w_x;
             b.segment<3>(i * 3) = exp(-err.segment<3>(i * 3).norm() * 100) * x.segment<3>(i * 3);
-            cov.block<3, 3>(i * 3, i * 3) = frame_j->second.pre_integration->covariance.block<3, 3>(0, 0)/ (dt * dt);
+//            cov.block<3, 3>(i * 3, i * 3) = frame_j->second.pre_integration->covariance.block<3, 3>(0, 0)/ (dt * dt);
+            cov.block<3, 3>(i * 3, i * 3) = 0.001 * MatrixXd::Identity(3, 3);
         }
         {
             Matrix3d R_w_x;
@@ -1929,9 +1930,10 @@ void WheelExtrisincInitialize(map<double, ImageFrame> &all_image_frame, MatrixXd
                     w_x(2), 0, -w_x(0),
                     -w_x(1), w_x(0), 0;
             A.block<3, 3>((all_image_frame.size()-1) * 3, 0) = exp(-err.segment<3>((all_image_frame.size()-1) * 3).norm() * 100) * RIC[0] * R0.transpose();
-            A.block<3, 3>((all_image_frame.size()-1) * 3, 3) = exp(-err.segment<3>((all_image_frame.size()-1) * 3).norm() * 100) * RIC[0] * R0.transpose() * R_w_x;
+            A.block<3, 3>((all_image_frame.size()-1) * 3, 3) = -exp(-err.segment<3>((all_image_frame.size()-1) * 3).norm() * 100) * RIC[0] * R0.transpose() * R_w_x;
             b.segment<3>((all_image_frame.size()-1) * 3) = exp(-err.segment<3>((all_image_frame.size()-1) * 3).norm() * 100) * x.segment<3>((all_image_frame.size()-1) * 3);
-            cov.block<3, 3>((all_image_frame.size()-1) * 3, (all_image_frame.size()-1) * 3) = frame_j->second.pre_integration->covariance.block<3, 3>(0, 0)/ (dt * dt);
+//            cov.block<3, 3>((all_image_frame.size()-1) * 3, (all_image_frame.size()-1) * 3) = frame_j->second.pre_integration->covariance.block<3, 3>(0, 0)/ (dt * dt);
+            cov.block<3, 3>((all_image_frame.size()-1) * 3, (all_image_frame.size()-1) * 3) = 0.001 * MatrixXd::Identity(3, 3);
         }
         MatrixXd cov_inv = cov.inverse();
 //        MatrixXd cov_inv = ((ACC_N * ACC_N) * cov.setIdentity()).inverse();
@@ -1949,6 +1951,7 @@ void WheelExtrisincInitialize(map<double, ImageFrame> &all_image_frame, MatrixXd
 //        x_tls = -svd.matrixV().row(6).head<6>() / (svd.matrixV().row(6).tail<1>()(0));
     }
     r_A = r_A.inverse();
+    r_A.bottomRightCorner<3, 3>() = Matrix3d::Identity();  // Due to the A Matrix is different between initial stage and optimization stage for translation estimation, here we set the part of A as Identity.
 
     Matrix3d tmp_R = Eigen::Quaterniond::FromTwoVectors(x_ep.head<3>(), Vector3d{1,0,0}).toRotationMatrix();
 
@@ -1956,8 +1959,8 @@ void WheelExtrisincInitialize(map<double, ImageFrame> &all_image_frame, MatrixXd
 //    Matrix3d tls_R = Eigen::Quaterniond::FromTwoVectors(x_tls.head<3>(), Vector3d{1,0,0}).toRotationMatrix();
 
 
-//    rio = RIC[0] * R0.transpose() * Utility::ypr2R(Eigen::Vector3d{Utility::R2ypr(tmp_R).x() , 0, 0}).transpose();
-    rio = RIC[0] * R0.transpose() * tmp_R.transpose();
+    rio = RIC[0] * R0.transpose() * Utility::ypr2R(Eigen::Vector3d{Utility::R2ypr(tmp_R).x() , 0, 0}).transpose();
+//    rio = RIC[0] * R0.transpose() * tmp_R.transpose();
     tio = x_ep.tail<3>();
     ROS_WARN_STREAM("rio     " << rio);
     ROS_WARN_STREAM("rio ypr     " << Utility::R2ypr_m(rio).transpose());
@@ -1968,8 +1971,95 @@ void WheelExtrisincInitialize(map<double, ImageFrame> &all_image_frame, MatrixXd
 //    ROS_WARN_STREAM("rio tls ypr     " << Utility::R2ypr_m(RIC[0] * R0.transpose() * tls_R.transpose()).transpose());
 //    ROS_WARN_STREAM("tio tls    " << x_tls.tail<3>().transpose());
 
-    r_A = 100000 * MatrixXd::Identity(6, 6);
-    x_ep.setZero();
+
+//    r_A = 100000 * MatrixXd::Identity(6, 6);
+    x_ep.tail<3>().setZero();
+}
+
+void WheelExtrisincInitialize_Road(map<double, ImageFrame> &all_image_frame, MatrixXd &r_A, Matrix3d &R0, Matrix3d &rio, Vector3d &tio, VectorXd &x){
+    ROS_WARN_STREAM("all_image_frame size: " << all_image_frame.size());
+    MatrixXd A{(all_image_frame.size() ) * 3, 6};
+    A.setZero();
+    VectorXd b{(all_image_frame.size() )* 3};
+    b.setZero();
+    MatrixXd cov{(all_image_frame.size() ) * 3, (all_image_frame.size() ) * 3};
+    cov.setZero();
+
+    map<double, ImageFrame>::iterator frame_i;
+    map<double, ImageFrame>::iterator frame_j;
+
+    // calculate the rotation
+    int i = 0;
+    for (frame_i = all_image_frame.begin(); next(frame_i) != all_image_frame.end(); frame_i++, i++ ) {
+        frame_j = next(frame_i);
+        double dt = frame_j->second.pre_integration->sum_dt;
+        A.block<3, 3>(i * 3, 0) = Matrix3d::Identity(3, 3);
+        b.segment<3>(i * 3) = ((RIC[0] * R0.transpose()).transpose() * x.segment<3>(i * 3)).normalized();
+//            cov.block<3, 3>(i * 3, i * 3) = frame_j->second.pre_integration->covariance.block<3, 3>(0, 0)/ (dt * dt);
+        cov.block<3, 3>(i * 3, i * 3) = 0.001 * MatrixXd::Identity(3, 3);
+    }
+    {
+        A.block<3, 3>((all_image_frame.size()-1) * 3, 0) = Matrix3d::Identity(3, 3);
+        b.segment<3>((all_image_frame.size()-1) * 3) = ((RIC[0] * R0.transpose()).transpose() * x.segment<3>((all_image_frame.size()-1) * 3)).normalized();
+//            cov.block<3, 3>((all_image_frame.size()-1) * 3, (all_image_frame.size()-1) * 3) = frame_j->second.pre_integration->covariance.block<3, 3>(0, 0)/ (dt * dt);
+        cov.block<3, 3>((all_image_frame.size()-1) * 3, (all_image_frame.size()-1) * 3) = 0.001 * MatrixXd::Identity(3, 3);
+    }
+    MatrixXd cov_inv = cov.inverse();
+    MatrixXd r_A_1 = A.transpose() * cov_inv * A;
+    VectorXd r_b_1 = A.transpose() * cov_inv * b;
+    VectorXd x_ep_1 = r_A_1.ldlt().solve(r_b_1);
+    double tmp_R_1 = acos(x_ep_1.head<3>().x()) / M_PI * 180.0;
+    ROS_WARN_STREAM("tmp_R     " << tmp_R_1);
+//    rio = RIC[0] * R0.transpose() * Utility::ypr2R(Eigen::Vector3d{tmp_R , 0, 0}).transpose();
+    Matrix3d tmp_R = Eigen::Quaterniond::FromTwoVectors(x_ep_1.head<3>(), Vector3d{1,0,0}).toRotationMatrix();
+    rio = RIC[0] * R0.transpose() * Utility::ypr2R(Eigen::Vector3d{Utility::R2ypr(tmp_R).x() , 0, 0}).transpose();
+    ROS_WARN_STREAM("tmp_R yaw     " << Utility::R2ypr(tmp_R).x());
+//    rio = RIC[0] * R0.transpose() * tmp_R.transpose();
+    ROS_WARN_STREAM("rio     " << rio);
+    ROS_WARN_STREAM("rio ypr     " << Utility::R2ypr_m(rio).transpose());
+
+    // calculate the translation
+    i = 0;
+    A.setZero();
+    b.setZero();
+    for (frame_i = all_image_frame.begin(); next(frame_i) != all_image_frame.end(); frame_i++, i++ ) {
+        frame_j = next(frame_i);
+        double dt = frame_j->second.pre_integration->sum_dt;
+        Matrix3d R_w_x;
+        Vector3d w_x = R0 * RIC[0].transpose() * (frame_j->second.pre_integration->gyr_0 - frame_j->second.pre_integration->linearized_bg);
+        R_w_x << 0, -w_x(2), w_x(1),
+                w_x(2), 0, -w_x(0),
+                -w_x(1), w_x(0), 0;
+        A.block<3, 3>(i * 3, 3) = RIC[0] * R0.transpose() * R_w_x;
+        b.segment<3>(i * 3) = x.segment<3>(i * 3) - rio * frame_j->second.pre_integration_wheel->vel_0;
+//            cov.block<3, 3>(i * 3, i * 3) = frame_j->second.pre_integration->covariance.block<3, 3>(0, 0)/ (dt * dt);
+        cov.block<3, 3>(i * 3, i * 3) = 0.001 * MatrixXd::Identity(3, 3);
+    }
+    {
+        Matrix3d R_w_x;
+        Vector3d w_x = R0 * RIC[0].transpose() * (frame_j->second.pre_integration->gyr_1 - frame_j->second.pre_integration->linearized_bg);
+        double dt = frame_j->second.pre_integration->sum_dt;
+        R_w_x << 0, -w_x(2), w_x(1),
+                w_x(2), 0, -w_x(0),
+                -w_x(1), w_x(0), 0;
+        A.block<3, 3>((all_image_frame.size()-1) * 3, 3) = RIC[0] * R0.transpose() * R_w_x;
+        b.segment<3>((all_image_frame.size()-1) * 3) = x.segment<3>((all_image_frame.size()-1) * 3) - rio * frame_j->second.pre_integration_wheel->vel_1;
+//            cov.block<3, 3>((all_image_frame.size()-1) * 3, (all_image_frame.size()-1) * 3) = frame_j->second.pre_integration->covariance.block<3, 3>(0, 0)/ (dt * dt);
+        cov.block<3, 3>((all_image_frame.size()-1) * 3, (all_image_frame.size()-1) * 3) = 0.001 * MatrixXd::Identity(3, 3);
+    }
+
+    MatrixXd r_A_2 = A.transpose() * cov_inv * A;
+    VectorXd r_b_2 = A.transpose() * cov_inv * b;
+    VectorXd x_ep_2 = r_A_2.ldlt().solve(r_b_2);
+    tio = x_ep_2.tail<3>();
+    ROS_WARN_STREAM("rio     " << rio);
+    ROS_WARN_STREAM("rio ypr     " << Utility::R2ypr_m(rio).transpose());
+    ROS_WARN_STREAM("tio     " << (rio.transpose() * tio).transpose());
+
+    r_A = r_A_1 + r_A_2;
+    r_A = r_A.inverse();
+    x_ep = x_ep_1 + x_ep_2;
+
 }
 
 bool VisualIMUAlignment(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs, Vector3d &g, VectorXd &x, Vector3d &wheel_s, Vector3d* Bas)
@@ -1991,7 +2081,7 @@ bool VisualIMUAlignment(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs,
 //    }
 //    else{
 //        return LinearAlignment_Joint(all_image_frame, g, x, Bas, Bgs);
-        return LinearAlignment(all_image_frame, g, x, Bas);
+        return LinearAlignment(all_image_frame, g, x);
 //        return LinearAlignment_Stereo(all_image_frame, g, x);
 //    }
 

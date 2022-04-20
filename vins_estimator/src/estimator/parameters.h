@@ -110,7 +110,7 @@ enum SIZE_PARAMETERIZATION
     SIZE_ROTATION = 4,
     SIZE_SPEEDBIAS = 9,
     SIZE_FEATURE = 1,
-    SIZE_G = 2,
+    SIZE_G = 4,
     SIZE_TIO = 3
 };
 

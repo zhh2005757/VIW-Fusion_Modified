@@ -439,6 +439,6 @@ void readParameters(std::string config_file)
     fsSettings.release();
 
     R0 = Eigen::Matrix3d::Identity();
-    x_ep.setZero();
+    x_ep = Eigen::VectorXd::Zero(6);
     ff = 1.0;
 }

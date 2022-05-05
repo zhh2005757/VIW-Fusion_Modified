@@ -332,7 +332,7 @@ bool LinearAlignment(map<double, ImageFrame> &all_image_frame, Vector3d &g, Vect
     (x.tail<4>())(0) = s;
     ROS_WARN_STREAM("refine scale: %f " << s);
 //    ROS_WARN_STREAM(" refine  g   " << g.norm() << " " << g.transpose());
-    if(s < 0.1 )
+    if(s < 0.0)
         return false;
     else
         return true;
@@ -1961,7 +1961,7 @@ void WheelExtrisincInitialize(map<double, ImageFrame> &all_image_frame, MatrixXd
 
     rio = RIC[0] * R0.transpose() * Utility::ypr2R(Eigen::Vector3d{Utility::R2ypr(tmp_R).x() , 0, 0}).transpose();
 //    rio = RIC[0] * R0.transpose() * tmp_R.transpose();
-    tio = x_ep.tail<3>();
+//    tio = x_ep.tail<3>();
     ROS_WARN_STREAM("rio     " << rio);
     ROS_WARN_STREAM("rio ypr     " << Utility::R2ypr_m(rio).transpose());
     ROS_WARN_STREAM("tio     " << (rio.transpose() * tio).transpose());
@@ -1972,8 +1972,8 @@ void WheelExtrisincInitialize(map<double, ImageFrame> &all_image_frame, MatrixXd
 //    ROS_WARN_STREAM("tio tls    " << x_tls.tail<3>().transpose());
 
 
-//    r_A = 100000 * MatrixXd::Identity(6, 6);
-    x_ep.tail<3>().setZero();
+    r_A = 100000 * MatrixXd::Identity(6, 6);
+    x_ep.setZero();
 }
 
 void WheelExtrisincInitialize_Road(map<double, ImageFrame> &all_image_frame, MatrixXd &r_A, Matrix3d &R0, Matrix3d &rio, Vector3d &tio, VectorXd &x){

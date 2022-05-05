@@ -343,29 +343,33 @@ void pubOdometry(const Estimator &estimator, const std_msgs::Header &header)
 
 
         if (estimator.line_start) {
-            // write result to file --RIO
-            ofstream foutC(OUTPUT_FOLDER + "/calib_rio_" + to_string(estimator.now) + ".csv", ios::app);
-            foutC.setf(ios::fixed, ios::floatfield);
-            foutC << std::setprecision(0)
-                  << header.stamp.toSec() * 1e9 << ","
-                  << std::setprecision(9)
-                  << estimator.yaw_test << ","
-                  << estimator.pitch_test << ","
-                  << estimator.roll_test << ","
-                  << std::endl;
-            foutC.close();
+            if (!estimator.rio_finish) {
+                // write result to file --RIO
+                ofstream foutC(OUTPUT_FOLDER + "/calib_rio_" + to_string(estimator.now) + ".csv", ios::app);
+                foutC.setf(ios::fixed, ios::floatfield);
+                foutC << std::setprecision(0)
+                      << header.stamp.toSec() * 1e9 << ","
+                      << std::setprecision(9)
+                      << estimator.yaw_test << ","
+                      << estimator.pitch_test << ","
+                      << estimator.roll_test << ","
+                      << std::endl;
+                foutC.close();
+            }
         }else {
-            // write result to file --TIO
-            ofstream foutC(OUTPUT_FOLDER + "/calib_tio_" + to_string(estimator.now) + ".csv", ios::app);
-            foutC.setf(ios::fixed, ios::floatfield);
-            foutC << std::setprecision(0)
-                  << header.stamp.toSec() * 1e9 << ","
-                  << std::setprecision(9)
-                  << estimator.x_test << ","
-                  << estimator.y_test << ","
-                  << estimator.z_test << ","
-                  << std::endl;
-            foutC.close();
+            if (estimator.rio_finish) {
+                // write result to file --TIO
+                ofstream foutC(OUTPUT_FOLDER + "/calib_tio_" + to_string(estimator.now) + ".csv", ios::app);
+                foutC.setf(ios::fixed, ios::floatfield);
+                foutC << std::setprecision(0)
+                      << header.stamp.toSec() * 1e9 << ","
+                      << std::setprecision(9)
+                      << estimator.x_test << ","
+                      << estimator.y_test << ","
+                      << estimator.z_test << ","
+                      << std::endl;
+                foutC.close();
+            }
         }
 
     }

@@ -2,22 +2,22 @@
 
 #common parameters
 #support: 1 imu 1 cam; 1 imu 2 cam: 2 cam; 
-imu: 1
-wheel: 1
-only_initial_with_wheel: 1 #只利用wheel进行初始化，不加入因子图
+imu: 1  
+wheel: 0
+only_initial_with_wheel: 0 #只利用wheel进行初始化，不加入因子图
 plane: 0
 num_of_cam: 2
 
-imu_topic: "/camera/imu"
-wheel_topic: "/chassis_feedback"
-image0_topic: "/camera/infra1/image_rect_raw"
-image1_topic: "/camera/infra2/image_rect_raw"
+imu_topic: "/imu"
+wheel_topic: "/odom"
+image0_topic: "/stereo/left/image_raw"
+image1_topic: "/stereo/right/image_raw"
 output_path: "/home/zhh2005757/viwo_ws/src/VIW-Fusion/output"
 
 cam0_calib: "left.yaml"
 cam1_calib: "right.yaml"
-image_width: 640
-image_height: 480
+image_width: 672
+image_height: 376
    
 
 # Extrinsic parameter between IMU and Camera.
@@ -35,9 +35,9 @@ body_T_cam0: !!opencv-matrix
    rows: 4
    cols: 4
    dt: d
-   data: [ 0.99993351,-0.00028486,  0.01152765, -0.03033676,
-           0.00027945,  0.99999985,  0.00047096,  0.00400522,
-           -0.01152778, -0.00046771,  0.99993344,  0.01938157,
+   data: [ 0.009471441780975032,-0.9939081748565041,  0.10980360533243941, -0.0309501,
+           0.9984567420628084,  0.0033909183804303744,  -0.055431362078334365,  -0.0771364,
+           0.05472134884952806, 0.11015916496574298,  0.9924064350628417,  0.0265125,
            0.,          0.,          0.,          1.        ]
 
 
@@ -46,10 +46,10 @@ body_T_cam1: !!opencv-matrix
    rows: 4
    cols: 4
    dt: d
-   data: [ 0.99996858, -0.00023212,  0.00792353,  0.06400517,
-           0.0002056,   0.99999438,  0.0033474,   0.00415678,
-           -0.00792426, -0.00334567,  0.99996301,  0.01878793,
-           0.,          0.,          0.,          1.       ]
+   data: [ 0.010486169744957197, -0.9940873423040585,  0.10807588128224391,  -0.0297023,
+           0.9972728488827708,   0.002500626397312078,  -0.07376050263429253,   0.0416412,
+           0.07305412462908822, 0.10855460717295605,  0.9914025378907414,  0.0333939,
+           0.,          0.,          0.,          1. ]
 
 # Extrinsic parameter between IMU and Wheel.
 estimate_wheel_extrinsic: 0   # 0  Have an accurate extrinsic parameters. We will trust the following imu^R_cam, imu^T_cam, don't change it.
@@ -68,28 +68,11 @@ body_T_wheel: !!opencv-matrix
   rows: 4
   cols: 4
   dt: d
-  #data: [0,-1,0,0.013,
-  #       0,0,-1,0.0,
-  #       1,0,0,-0.14,
-  #       0,0,0,1]
-  #EP scout1 (19.6778 -90.7859  69.9322)
-  data: [-0.0129152,   -0.999894, -0.00677643, 0.0  ,
-         -0.00461867,  0.00683658,   -0.999966, 0.0,
-          0.999906,  -0.0128835, -0.00470648, 0.0,
-          0,0,0,1]
-  # EP scout1 (6.97418 -92.9751  82.8067)
-  #data: [-0.0515179,   -0.998665,  -0.0036564,0.0,
-  #       -0.00630204,  0.00398629,   -0.999972,  0.0,
-  #       0.998652,  -0.0514934, -0.00649899,  -0.0,
-  #      0,0,0,1]
-  # EP scout2
-  #data: [0.0513279,   -0.998651, -0.00783981,0,
-  #       -0.0419753,  0.00568593,   -0.999102, 0,
-  #       0.997799,   0.0516109,  -0.0416269, 0,
-  #      0,0,0,1]
-#  0.0317452  -0.999418 -0.0124697     -51.1387 -87.0999   140.46 scout2
-#  -0.0393967  0.0112151  -0.999161
-#  0.998719  0.0322098 -0.0390178
+  data: [  0.228467, -0.00156345,     0.97355,  -1.44084,
+          -0.00888818,    -0.99996, 0.000479969,  0.0,
+           0.973511, -0.00876275,   -0.228472,  -1.67519,
+         0,0,0,1]
+
 
 #plane noise
 #mono:0.01 stereo:0.005
@@ -105,7 +88,7 @@ zpw_n: 0.0025
 multiple_thread: 1
 
 #feature traker paprameters
-max_cnt: 150            # max feature number in feature tracking
+max_cnt: 200            # max feature number in feature tracking
 min_dist: 30            # min distance between two features 
 freq: 10                # frequence (Hz) of publish tracking result. At least 10Hz for good estimation. If set 0, the frequence will be same as raw image 
 F_threshold: 1.0        # ransac threshold (pixel)
@@ -118,11 +101,11 @@ max_num_iterations: 8   # max solver itrations, to guarantee real time
 keyframe_parallax: 10.0 # keyframe selection threshold (pixel)
 
 #imu parameters       The more accurate parameters you provide, the better performance
-acc_n: 1.2075446068944201e-02          # accelerometer measurement noise standard deviation. #0.2   0.04
-gyr_n: 1.6075978387297028e-03         # gyroscope measurement noise standard deviation.     #0.05  0.004
-acc_w: 2.1473244394473552e-04         # accelerometer bias random work noise standard deviation.  #0.002
-gyr_w: 1.3518087259292092e-05       # gyroscope bias random work noise standard deviation.     #4.0e-5
-g_norm: 9.80151         # gravity magnitude
+acc_n: 0.04          # accelerometer measurement noise standard deviation. #0.2   0.04
+gyr_n: 0.004         # gyroscope measurement noise standard deviation.     #0.05  0.004
+acc_w: 0.002         # accelerometer bias random work noise standard deviation.  #0.002
+gyr_w: 4e-05       # gyroscope bias random work noise standard deviation.     #4.0e-5
+g_norm: 9.81         # gravity magnitude
 
 #wheel parameters
 # rad/s mono:0.004 stereo:0.002
@@ -141,11 +124,11 @@ sy: 1.0
 sw: 1.0
 
 #unsynchronization parameters
-estimate_td: 0                     # online estimate time offset between camera and imu
-td: 0.00393                             # initial value of time offset. unit: s. readed image clock + td = real image clock (IMU clock)
+estimate_td: 1                     # online estimate time offset between camera and imu
+td: 0.0                             # initial value of time offset. unit: s. readed image clock + td = real image clock (IMU clock)
 
 estimate_td_wheel: 0                      # online estimate time offset between camera and wheel
-td_wheel: 0.008  
+td_wheel: 0.0
 
 #loop closure parameters
 load_previous_pose_graph: 0        # load and reuse previous pose graph; load from 'pose_graph_save_path'

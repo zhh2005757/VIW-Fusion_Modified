@@ -4,9 +4,9 @@
 #support: 1 imu 1 cam; 1 imu 2 cam: 2 cam; 
 imu: 1
 wheel: 1
-only_initial_with_wheel: 1 #只利用wheel进行初始化，不加入因子图
+only_initial_with_wheel: 1  #只利用wheel进行初始化，不加入因子图
 plane: 0
-num_of_cam: 1
+num_of_cam: 2
 
 imu_topic: "/imu/data"
 wheel_topic: "/ridgeback_velocity_controller/odom"   #"/ridgeback_velocity_controller/odom"， “/odometry/filtered”
@@ -37,19 +37,23 @@ body_T_cam0: !!opencv-matrix
    rows: 4
    cols: 4
    dt: d
-   data: [ 0.0,   0.0,   1.0,  0.041,
-          -1.0,   0.0,   0.0,  0.307,
-           0.0,  -1.0,   0.0,  0.544,
-           0,     0,     0,    1 ]
+   data: [ -4.0679937103391683e-03, -1.1197432128756291e-02,
+           9.9992903195221561e-01, 1.0114859460206488e-01,
+           -9.9999112328705797e-01, -1.0520109281433321e-03,
+           -4.0800269724421412e-03, 3.0433781318555730e-01,
+           1.0976220940886461e-03, -9.9993675339329813e-01,
+           -1.1193053158526922e-02, 7.4828275222165430e-01, 0., 0., 0., 1 ]
 
 body_T_cam1: !!opencv-matrix
    rows: 4
    cols: 4
    dt: d
-   data: [ 0.0,   0.0,   1.0,  0.041,
-           -1.0,   0.0,   0.0, 0.258,
-           0.0,  -1.0,   0.0,  0.544,
-           0,     0,     0,    1 ]
+   data: [ -4.5909769532022082e-03, -1.0740650214945302e-02,
+           9.9993177835469149e-01, 1.0784512582890311e-01,
+           -9.9998906687302302e-01, -8.3894087083624669e-04,
+           -4.6002513666298372e-03, 2.5359843042544356e-01,
+           8.8829332773926462e-04, -9.9994196562159332e-01,
+           -1.0736681227849765e-02, 7.4866637800358316e-01, 0., 0., 0., 1 ]
 
 
 # Extrinsic parameter between IMU and Wheel.
@@ -102,7 +106,7 @@ flow_back: 1            # perform forward and backward optical flow to improve f
 #optimization parameters
 max_solver_time: 0.04  # max solver itration time (ms), to guarantee real time
 max_num_iterations: 8   # max solver itrations, to guarantee real time
-keyframe_parallax: 12.0 # keyframe selection threshold (pixel)
+keyframe_parallax: 10.0 # keyframe selection threshold (pixel)
 
 #imu parameters       The more accurate parameters you provide, the better performance
 acc_n: 0.1         # accelerometer measurement noise standard deviation. #0.2   0.04

@@ -71,6 +71,8 @@ class Estimator
     bool checkObservibility();
     bool checkObservibility_wheel();
     bool checkLine();
+    bool checkZeroV();
+    bool static_initialize();
 
     bool initialStructure();
     bool visualInitialAlign();
@@ -246,9 +248,8 @@ class Estimator
     double yaw_test, pitch_test, roll_test;
     double x_test, y_test, z_test;
     Matrix3d R00;
-    MatrixXd r_A;
+    MatrixXd r_A = MatrixXd::Identity(6, 6);
     MatrixXd r_A_tio;
-    list<double> yaw_sum_vec;
     Matrix3d tmp_R;
     Vector3d g_init;
     map<double, ImageFrame> all_image_frame_init;
@@ -259,7 +260,38 @@ class Estimator
     bool corner_start = false;
     bool corner_end = false;
     bool rio_finish = false;
+    bool tio_finish = false;
     const time_t now = time(0);
     queue<Eigen::Vector3d> angular_buf;
+    queue<Eigen::Vector3d> wheel_velocity_buf;
     double angular_v_sum = 0.0;
+    double wheel_v_sum = 0.0;
+    int corner_count = 0;
+    list<double> yaw_sum_vec;
+    list<double> xy_sum_vec;
+//    Vector2d x_ep_0;
+    VectorXd x_ep_0 = VectorXd::Zero(6);
+//    Matrix2d r_A_0 = Matrix2d::Identity();
+    MatrixXd r_A_0 = MatrixXd::Identity(6, 6);
+
+    // static initialization
+    double oldest_time;
+    double newest_time;
+    int imu_count;
+    struct ImuData {
+        /// Timestamp of the reading
+        double timestamp;
+        /// Gyroscope reading, angular velocity (rad/s)
+        Vector3d wm;
+        /// Accelerometer reading, linear acceleration (m/s^2)
+        Vector3d am;
+    };
+    vector<ImuData> imu_data_list;
+    bool static_flag;
+    bool static_init_flag;
+    double init_window_time = 2.0;
+    double init_imu_thresh = 0.3;
+
+    // LS
+    list<pair<Matrix<double, 3, 6>, Vector3d>> LS_list;
 };

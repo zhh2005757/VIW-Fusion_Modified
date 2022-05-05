@@ -1,0 +1,6 @@
+<launch>
+    <node name="rvizvisualisation" pkg="rviz" type="rviz" output="log" args="-d $(find vins)/../config/vins_rviz_config.rviz" />
+    <node name="vins_estimator" pkg="vins" type="viwo_node" output="screen" args="/home/zhh2005757/viwo_ws/src/VIW-Fusion/config/rosario/rosario_config.yaml" />
+    <!--<node name="vins_estimator" pkg="vins" type="viwo_node" output="screen" args="/home/zhh2005757/viwo_ws/src/VIW-Fusion/config/rosario/rosario_config.yaml" launch-prefix="gdb -ex run -args"/>-->
+    <node name="rqtplot" pkg="rqt_plot" type="rqt_plot" output="log" args="" />
+</launch>

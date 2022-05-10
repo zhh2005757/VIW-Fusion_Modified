@@ -3,10 +3,10 @@
 #common parameters
 #support: 1 imu 1 cam; 1 imu 2 cam: 2 cam; 
 imu: 1
-wheel: 1
+wheel: 0
 only_initial_with_wheel: 1 #只利用wheel进行初始化，不加入因子图
 plane: 0
-num_of_cam: 2
+num_of_cam: 1
 
 imu_topic: "/camera/imu"
 wheel_topic: "/chassis_feedback"
@@ -142,10 +142,10 @@ sw: 1.0
 
 #unsynchronization parameters
 estimate_td: 0                     # online estimate time offset between camera and imu
-td: 0.00393                             # initial value of time offset. unit: s. readed image clock + td = real image clock (IMU clock)
+td: 0.0                             # initial value of time offset. unit: s. readed image clock + td = real image clock (IMU clock)  0.00393
 
 estimate_td_wheel: 0                      # online estimate time offset between camera and wheel
-td_wheel: 0.008  
+td_wheel: 0.0             # 0.008
 
 #loop closure parameters
 load_previous_pose_graph: 0        # load and reuse previous pose graph; load from 'pose_graph_save_path'

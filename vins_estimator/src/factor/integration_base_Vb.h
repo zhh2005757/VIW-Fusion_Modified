@@ -7,7 +7,7 @@
  * you may not use this file except in compliance with the License.
  *******************************************************/
 
-// This is the modified version for EP calibration
+// This is the modified version for Vb
 
 #pragma once
 
@@ -221,13 +221,13 @@ class IntegrationBase
         Eigen::Vector3d corrected_delta_p = delta_p + dp_dba * dba + dp_dbg * dbg;
 
         Matrix3d R_w_0;
-        Vector3d w_x_0 = R0 * RIC[0].transpose() * (gyr_0 - linearized_bg);
+        Vector3d w_x_0 = -R0 * RIC[0].transpose() * (gyr_0 - linearized_bg);
         R_w_0 << 0, -w_x_0(2), w_x_0(1),
                 w_x_0(2), 0, -w_x_0(0),
                 -w_x_0(1), w_x_0(0), 0;
 
         Matrix3d R_w_1;
-        Vector3d w_x_1 = R0 * RIC[0].transpose() * (gyr_1 - linearized_bg);
+        Vector3d w_x_1 = -R0 * RIC[0].transpose() * (gyr_1 - linearized_bg);
         R_w_1 << 0, -w_x_1(2), w_x_1(1),
                 w_x_1(2), 0, -w_x_1(0),
                 -w_x_1(1), w_x_1(0), 0;

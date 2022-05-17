@@ -87,6 +87,7 @@ extern int USE_IMU;
 extern int USE_WHEEL;
 extern int USE_PLANE;
 extern int ONLY_INITIAL_WITH_WHEEL;
+extern int ESTIMATE_TIO;
 extern int MULTIPLE_THREAD;
 // pts_gt for debug purpose;
 extern map<int, Eigen::Vector3d> pts_gt;

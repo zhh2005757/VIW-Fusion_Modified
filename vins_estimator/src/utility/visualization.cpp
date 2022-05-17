@@ -341,36 +341,61 @@ void pubOdometry(const Estimator &estimator, const std_msgs::Header &header)
         printf("time: %f, t: %f %f %f q: %f %f %f %f \n", header.stamp.toSec(), tmp_T.x, tmp_T.y, tmp_T.z,
                tmp_Q.w(), tmp_Q.x(), tmp_Q.y(), tmp_Q.z());
 
+        // write result to file --RIO
+        ofstream foutRIO(OUTPUT_FOLDER + "/calib_rio_nonlinear" + to_string(estimator.now) + ".csv", ios::app);
+        foutRIO.setf(ios::fixed, ios::floatfield);
+        foutRIO << std::setprecision(0)
+              << header.stamp.toSec() * 1e9 << ","
+              << std::setprecision(9)
+              << estimator.yaw_test << ","
+              << estimator.pitch_test << ","
+              << estimator.roll_test << ","
+              << estimator.tmpR_test << ","
+              << std::endl;
+        foutRIO.close();
 
-        if (estimator.line_start) {
-            if (!estimator.rio_finish) {
-                // write result to file --RIO
-                ofstream foutC(OUTPUT_FOLDER + "/calib_rio_" + to_string(estimator.now) + ".csv", ios::app);
-                foutC.setf(ios::fixed, ios::floatfield);
-                foutC << std::setprecision(0)
-                      << header.stamp.toSec() * 1e9 << ","
-                      << std::setprecision(9)
-                      << estimator.yaw_test << ","
-                      << estimator.pitch_test << ","
-                      << estimator.roll_test << ","
-                      << std::endl;
-                foutC.close();
-            }
-        }else {
-            if (estimator.rio_finish) {
-                // write result to file --TIO
-                ofstream foutC(OUTPUT_FOLDER + "/calib_tio_" + to_string(estimator.now) + ".csv", ios::app);
-                foutC.setf(ios::fixed, ios::floatfield);
-                foutC << std::setprecision(0)
-                      << header.stamp.toSec() * 1e9 << ","
-                      << std::setprecision(9)
-                      << estimator.x_test << ","
-                      << estimator.y_test << ","
-                      << estimator.z_test << ","
-                      << std::endl;
-                foutC.close();
-            }
-        }
+        // write result to file --TIO
+        ofstream foutTIO(OUTPUT_FOLDER + "/calib_tio_nonlinear" + to_string(estimator.now) + ".csv", ios::app);
+        foutTIO.setf(ios::fixed, ios::floatfield);
+        foutTIO << std::setprecision(0)
+              << header.stamp.toSec() * 1e9 << ","
+              << std::setprecision(9)
+              << estimator.x_test << ","
+              << estimator.y_test << ","
+              << estimator.z_test << ","
+              << std::endl;
+        foutTIO.close();
+
+
+//        if (estimator.line_start) {
+//            if (!estimator.rio_finish) {
+//                // write result to file --RIO
+//                ofstream foutC(OUTPUT_FOLDER + "/calib_rio_" + to_string(estimator.now) + ".csv", ios::app);
+//                foutC.setf(ios::fixed, ios::floatfield);
+//                foutC << std::setprecision(0)
+//                      << header.stamp.toSec() * 1e9 << ","
+//                      << std::setprecision(9)
+//                      << estimator.yaw_test << ","
+//                      << estimator.pitch_test << ","
+//                      << estimator.roll_test << ","
+//                      << std::endl;
+//                foutC.close();
+//            }
+//        }else {
+//            if (estimator.rio_finish) {
+//                // write result to file --TIO
+//                ofstream foutC(OUTPUT_FOLDER + "/calib_tio_" + to_string(estimator.now) + ".csv", ios::app);
+//                foutC.setf(ios::fixed, ios::floatfield);
+//                foutC << std::setprecision(0)
+//                      << header.stamp.toSec() * 1e9 << ","
+//                      << std::setprecision(9)
+//                      << estimator.x_test << ","
+//                      << estimator.y_test << ","
+//                      << estimator.z_test << ","
+//                      << std::endl;
+//                foutC.close();
+//            }
+//        }
 
     }
 }

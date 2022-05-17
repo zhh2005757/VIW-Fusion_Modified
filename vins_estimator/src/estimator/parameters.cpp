@@ -70,6 +70,7 @@ int USE_IMU;
 int USE_WHEEL;
 int USE_PLANE;
 int ONLY_INITIAL_WITH_WHEEL;
+int ESTIMATE_TIO;
 int MULTIPLE_THREAD;
 map<int, Eigen::Vector3d> pts_gt;
 std::string IMAGE0_TOPIC, IMAGE1_TOPIC;
@@ -139,6 +140,7 @@ void readParameters(std::string config_file)
     printf("USE_WHEEL: %d\n", USE_WHEEL);
 
     ONLY_INITIAL_WITH_WHEEL = fsSettings["only_initial_with_wheel"];
+    ESTIMATE_TIO = fsSettings["estimate_tio"];
     printf("INITIAL_WITH_WHEEL: %d\n", ONLY_INITIAL_WITH_WHEEL);
 
     USE_PLANE = fsSettings["plane"];

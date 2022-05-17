@@ -81,17 +81,19 @@ class IMUWheelFactor : public ceres::SizedCostFunction<15, 7, 9, 7, 9, 3>
         residual = sqrt_info * residual;
 
         Matrix3d R_w_0;
-        Vector3d w_x_0 = -R0 * RIC[0].transpose() * (pre_integration->gyr_buf[0] - pre_integration->linearized_bg);
+        Vector3d w_x_0 = RIC[0] * R0.transpose() * (pre_integration->gyr_buf[0]);
 //        w_x_0.setZero();
         R_w_0 << 0, -w_x_0(2), w_x_0(1),
                 w_x_0(2), 0, -w_x_0(0),
                 -w_x_0(1), w_x_0(0), 0;
+        R_w_0 = -R0 * RIC[0].transpose() * R_w_0;
         Matrix3d R_w_1;
-        Vector3d w_x_1 = -R0 * RIC[0].transpose() * (pre_integration->gyr_buf[pre_integration->gyr_buf.size()-1] - pre_integration->linearized_bg);
+        Vector3d w_x_1 = RIC[0] * R0.transpose() * (pre_integration->gyr_buf[pre_integration->gyr_buf.size()-1]);
 //        w_x_1.setZero();
         R_w_1 << 0, -w_x_1(2), w_x_1(1),
                 w_x_1(2), 0, -w_x_1(0),
                 -w_x_1(1), w_x_1(0), 0;
+        R_w_1 = -R0 * RIC[0].transpose() * R_w_1;
 
         if (jacobians)
         {

@@ -61,6 +61,7 @@ class Estimator
     void inputFeature(double t, const vector<cv::Point2f>& _features0, const vector<cv::Point2f>& _features1=vector<cv::Point2f>());//仿真的feature
     void inputGroundtruth(double t, Eigen::Matrix<double, 7, 1>& data);
     void processIMU(double t, double dt, const Vector3d &linear_acceleration, const Vector3d &angular_velocity);
+    void processIMU(double t, double dt, const Vector3d &linear_acceleration, const Vector3d &angular_velocity, const Vector3d &wheel_velocity);
     void processWheel(double t, double dt, const Vector3d &linear_velocity, const Vector3d &angular_velocity);
     void integrateWheelPreintegration( double t, Eigen::Vector3d& P, Eigen::Quaterniond& Q, const Eigen::Matrix<double, 7, 1>& pose);
     void processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const double header);
@@ -180,6 +181,7 @@ class Estimator
     vector<double> dt_buf[(WINDOW_SIZE + 1)];
     vector<Vector3d> linear_acceleration_buf[(WINDOW_SIZE + 1)];
     vector<Vector3d> angular_velocity_buf[(WINDOW_SIZE + 1)];
+    vector<Vector3d> vel_velocity_buf[(WINDOW_SIZE + 1)];
 
     vector<double> dt_buf_wheel[(WINDOW_SIZE + 1)];
     vector<Vector3d> linear_velocity_buf_wheel[(WINDOW_SIZE + 1)];
@@ -246,7 +248,7 @@ class Estimator
     bool initThreadFlag;
 
     //public test variable
-    double yaw_test, pitch_test, roll_test;
+    double yaw_test, pitch_test, roll_test, tmpR_test;
     double x_test, y_test, z_test;
     Matrix3d R00;
     MatrixXd r_A = MatrixXd::Identity(6, 6);
@@ -295,4 +297,8 @@ class Estimator
 
     // LS
     list<pair<Matrix<double, 3, 6>, Vector3d>> LS_list;
+
+    Vector3d tio_0 = Vector3d::Zero();
+    Matrix3d rio_0 = Matrix3d::Identity();
+    list<Vector3d> gyr_smooth_list;
 };

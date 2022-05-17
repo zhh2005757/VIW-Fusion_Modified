@@ -46,6 +46,20 @@ class IntegrationBase
         propagate(dt, acc, gyr);
     }
 
+    /* IMU */
+    void push_back(double dt, const Eigen::Vector3d &acc, const Eigen::Vector3d &gyr, const Eigen::Vector3d &vel)
+    {
+//        if(gyr_buf.empty()){
+//            ROS_WARN_STREAM("gyr0 " << endl << gyr.transpose());
+//        }
+        dt_buf.push_back(dt);
+        acc_buf.push_back(acc);
+        gyr_buf.push_back(gyr);
+        vel_buf.push_back(vel);
+        propagate(dt, acc, gyr);
+    }
+    /* IMU */
+
     void repropagate(const Eigen::Vector3d &_linearized_ba, const Eigen::Vector3d &_linearized_bg)
     {
         sum_dt = 0.0;
@@ -193,16 +207,20 @@ class IntegrationBase
         Eigen::Vector3d corrected_delta_p = delta_p + dp_dba * dba + dp_dbg * dbg;
 
         Matrix3d R_w_0;
-        Vector3d w_x_0 = -R0 * RIC[0].transpose() * (gyr_buf[0] - linearized_bg);
+        Vector3d w_x_0 = RIC[0] * R0.transpose() * (gyr_buf[0]);
+//        ROS_WARN_STREAM("w_x_0" << w_x_0.transpose());
         R_w_0 << 0, -w_x_0(2), w_x_0(1),
                 w_x_0(2), 0, -w_x_0(0),
                 -w_x_0(1), w_x_0(0), 0;
+        R_w_0 = -R0 * RIC[0].transpose() * R_w_0;
 
         Matrix3d R_w_1;
-        Vector3d w_x_1 = -R0 * RIC[0].transpose() * (gyr_buf[gyr_buf.size()-1] - linearized_bg);
+        Vector3d w_x_1 = RIC[0] * R0.transpose() * (gyr_buf[gyr_buf.size()-1]);
+//        ROS_WARN_STREAM("w_x_1" << w_x_1.transpose());
         R_w_1 << 0, -w_x_1(2), w_x_1(1),
                 w_x_1(2), 0, -w_x_1(0),
                 -w_x_1(1), w_x_1(0), 0;
+        R_w_1 = -R0 * RIC[0].transpose() * R_w_1;
 
         residuals.block<3, 1>(O_P, 0) = Qi.inverse() * (0.5 * G * sum_dt * sum_dt + Pj - Pi) - corrected_delta_p - RIC[0] * R0.transpose() * Vbi * sum_dt - RIC[0] * R0.transpose() * R_w_0 * TIO * sum_dt ;
         residuals.block<3, 1>(O_R, 0) = 2 * (corrected_delta_q.inverse() * (Qi.inverse() * Qj)).vec();
@@ -233,5 +251,9 @@ class IntegrationBase
     std::vector<double> dt_buf;
     std::vector<Eigen::Vector3d> acc_buf;
     std::vector<Eigen::Vector3d> gyr_buf;
+
+    /* IMU */
+    std::vector<Eigen::Vector3d> vel_buf;
+    /* IMU */
 
 };

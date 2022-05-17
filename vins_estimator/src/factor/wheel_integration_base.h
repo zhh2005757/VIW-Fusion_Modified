@@ -40,6 +40,9 @@ class WheelIntegrationBase
 
     void push_back(double dt, const Eigen::Vector3d &vel, const Eigen::Vector3d &gyr)
     {
+//        if(vel_buf.empty()){
+            ROS_WARN_STREAM("vel_0_wheel " << endl << vel.transpose());
+//        }
         dt_buf.push_back(dt);
         vel_buf.push_back(vel);
         gyr_buf.push_back(gyr);

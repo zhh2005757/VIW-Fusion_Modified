@@ -111,7 +111,8 @@ enum SIZE_PARAMETERIZATION
     SIZE_SPEEDBIAS = 9,
     SIZE_FEATURE = 1,
     SIZE_G = 4,
-    SIZE_TIO = 3
+    SIZE_TIO = 7,
+    SIZE_BIAS = 6
 };
 
 enum StateOrder

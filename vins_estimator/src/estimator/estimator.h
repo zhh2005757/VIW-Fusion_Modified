@@ -32,8 +32,8 @@
 #include "../initial/initial_alignment.h"
 #include "../initial/initial_ex_rotation.h"
 //#include "../factor/imu_factor.h"
-#include "../factor/imu_wheel_factor.h"
-//#include "../factor/imu_wheel_line_factor.h"
+//#include "../factor/imu_wheel_factor.h"
+#include "../factor/imu_wheel_line_factor.h"
 #include "../factor/plane_factor.h"
 #include "../factor/wheel_factor.h"
 #include "../factor/pose_local_parameterization.h"
@@ -61,6 +61,7 @@ class Estimator
     void inputFeature(double t, const vector<cv::Point2f>& _features0, const vector<cv::Point2f>& _features1=vector<cv::Point2f>());//仿真的feature
     void inputGroundtruth(double t, Eigen::Matrix<double, 7, 1>& data);
     void processIMU(double t, double dt, const Vector3d &linear_acceleration, const Vector3d &angular_velocity);
+    void processIMU(double t, double dt, const Vector3d &linear_acceleration, const Vector3d &angular_velocity, const Vector3d &wheel_velocity);
     void processWheel(double t, double dt, const Vector3d &linear_velocity, const Vector3d &angular_velocity);
     void integrateWheelPreintegration( double t, Eigen::Vector3d& P, Eigen::Quaterniond& Q, const Eigen::Matrix<double, 7, 1>& pose);
     void processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const double header);
@@ -180,6 +181,7 @@ class Estimator
     vector<double> dt_buf[(WINDOW_SIZE + 1)];
     vector<Vector3d> linear_acceleration_buf[(WINDOW_SIZE + 1)];
     vector<Vector3d> angular_velocity_buf[(WINDOW_SIZE + 1)];
+    vector<Vector3d> vel_velocity_buf[(WINDOW_SIZE + 1)];
 
     vector<double> dt_buf_wheel[(WINDOW_SIZE + 1)];
     vector<Vector3d> linear_velocity_buf_wheel[(WINDOW_SIZE + 1)];
@@ -205,7 +207,8 @@ class Estimator
 
 
     double para_Pose[WINDOW_SIZE + 1][SIZE_POSE];
-    double para_SpeedBias[WINDOW_SIZE + 1][SIZE_SPEEDBIAS];
+//    double para_SpeedBias[WINDOW_SIZE + 1][SIZE_SPEEDBIAS];
+    double para_SpeedBias[WINDOW_SIZE + 1][SIZE_BIAS];
     double para_Gravity[1][SIZE_G];
     double para_TIO[WINDOW_SIZE + 1][SIZE_TIO];
     double para_Feature[NUM_OF_F][SIZE_FEATURE];
@@ -295,4 +298,10 @@ class Estimator
 
     // LS
     list<pair<Matrix<double, 3, 6>, Vector3d>> LS_list;
+
+    Vector3d tio_0 = Vector3d::Zero();
+    Matrix3d rio_0 = Matrix3d::Identity();
+//    Matrix3d dR = Matrix3d::Identity();
+    Matrix3d dR = Utility::ypr2R(Vector3d{90,0,0});
+    list<Vector3d> gyr_smooth_list;
 };

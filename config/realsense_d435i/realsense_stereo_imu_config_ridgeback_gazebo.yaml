@@ -3,9 +3,9 @@
 #common parameters
 #support: 1 imu 1 cam; 1 imu 2 cam: 2 cam; 
 imu: 1
-wheel: 1
+wheel: 0
 only_initial_with_wheel: 0 #只利用wheel进行初始化，不加入因子图
-estimate_tio : 0
+estimate_tio: 1
 plane: 0
 num_of_cam: 1
 
@@ -54,12 +54,12 @@ body_T_cam1: !!opencv-matrix
 
 
 # Extrinsic parameter between IMU and Wheel.
-estimate_wheel_extrinsic: 1   # 0  Have an accurate extrinsic parameters. We will trust the following imu^R_cam, imu^T_cam, don't change it.
+estimate_wheel_extrinsic: 0   # 0  Have an accurate extrinsic parameters. We will trust the following imu^R_cam, imu^T_cam, don't change it.
 # 1  Have an initial guess about extrinsic parameters. We will optimize around your initial guess.
 # 2  Don't know anything about extrinsic parameters. You don't need to give R,T. We will try to calibrate it. Do some rotation movement at beginning.
 #If you choose 0 or 1, you should write down the following matrix.
 
-extrinsic_type_wheel: 4 # 0 ALL
+extrinsic_type_wheel: 1 # 0 ALL
                         # 1 Only translation
                         # 2 Only Rotation
                         # 3 no z
@@ -70,8 +70,8 @@ body_T_wheel: !!opencv-matrix
   rows: 4
   cols: 4
   dt: d
-  data: [1, 0, 0, -0.208,
-         0, 1, 0, 0.290,
+  data: [1, 0, 0, -0.5,
+         0, 1, 0, 0.5,
          0, 0, 1, -0.168,
          0, 0, 0, 1]
 

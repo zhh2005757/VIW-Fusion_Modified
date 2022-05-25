@@ -961,7 +961,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
             if (frame_count == WINDOW_SIZE)
             {
                 bool result = false;
-                if(ESTIMATE_EXTRINSIC != 2 && ESTIMATE_EXTRINSIC_WHEEL != 2 && (header - initial_timestamp) > 0.1)
+                if(ESTIMATE_EXTRINSIC != 2 && (header - initial_timestamp) > 0.1)
                 {
                     result = initialStructure();
                     initial_timestamp = header;
@@ -1585,7 +1585,7 @@ bool Estimator::visualInitialAlign()
     ROS_WARN_STREAM("g0     " << g.transpose());
     ROS_WARN_STREAM("my R0  " << Utility::R2ypr(Rs[0]).transpose());
     ROS_WARN_STREAM("R0  " << Utility::R2ypr(R0).transpose());
-//    tio.setZero();
+//    tio_0=Vector3d{-0.5,0.5,0.0};
 //    ROS_WARN_STREAM("my R0  " << Rs[0]);
 
     // calib rio
@@ -2089,7 +2089,7 @@ void Estimator::optimization()
 //            parameters[3] = para_SpeedBias[j];
 //            imu_factor->check(const_cast<double **>(parameters.data()));
         }
-        if (ESTIMATE_TIO)
+        if (!ESTIMATE_TIO)
         {
             problem.SetParameterBlockConstant(para_TIO[0]);
         }
@@ -2843,21 +2843,24 @@ void Estimator::updateLatestStates()
         tmp_gyrBuf.pop();
     }
 
-    tmp_R = Eigen::Quaterniond::FromTwoVectors(Vb[frame_count], Eigen::Vector3d{1,0,0}).toRotationMatrix();
-    rio_0 = RIC[0] * (Utility::ypr2R(Eigen::Vector3d{Utility::R2ypr(tmp_R).x() , 0, 0}) * R0).transpose() ;
+    if (ESTIMATE_TIO) {
+        tmp_R = Eigen::Quaterniond::FromTwoVectors(Vb[frame_count], Eigen::Vector3d{1, 0, 0}).toRotationMatrix();
+        rio_0 = RIC[0] * (Utility::ypr2R(Eigen::Vector3d{Utility::R2ypr(tmp_R).x(), 0, 0}) * R0).transpose();
+        Matrix3d rio_1 = RIC[0] * (tmp_R * R0).transpose();
 
-
-    yaw_test = Utility::R2ypr_m(rio_0).x();
-    pitch_test = Utility::R2ypr_m(rio_0).y();
-    roll_test = Utility::R2ypr_m(rio_0).z();
-    tmpR_test = Utility::R2ypr(tmp_R).x();
-    x_test = tio_0.x();
-    y_test = tio_0.y();
-    z_test = tio_0.z();
-    ROS_WARN_STREAM("tio     " << tio_0.transpose());
-    ROS_WARN_STREAM("rio  ypr   " << Utility::R2ypr_m(rio_0).transpose());
-    ROS_WARN_STREAM("rio     " << endl << rio_0);
-    ROS_WARN_STREAM("tmp_R   " << Utility::R2ypr(tmp_R).transpose());
+        yaw_test = Utility::R2ypr_m(rio_0).x();
+        pitch_test = Utility::R2ypr_m(rio_0).y();
+        roll_test = Utility::R2ypr_m(rio_0).z();
+        tmpR_test = Utility::R2ypr(tmp_R).x();
+        x_test = tio_0.x();
+        y_test = tio_0.y();
+        z_test = tio_0.z();
+        ROS_WARN_STREAM("tio     " << tio_0.transpose());
+        ROS_WARN_STREAM("rio  ypr   " << Utility::R2ypr_m(rio_0).transpose());
+        ROS_WARN_STREAM("rio_1  ypr   " << Utility::R2ypr_m(rio_1).transpose());
+        ROS_WARN_STREAM("rio     " << endl << rio_0);
+        ROS_WARN_STREAM("tmp_R   " << Utility::R2ypr(tmp_R).transpose());
+    }
 
     mPropagate.unlock();
 

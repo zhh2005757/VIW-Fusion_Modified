@@ -33,7 +33,8 @@
 #include "../initial/initial_ex_rotation.h"
 //#include "../factor/imu_factor.h"
 //#include "../factor/imu_wheel_factor.h"
-#include "../factor/imu_wheel_line_factor.h"
+//#include "../factor/imu_wheel_line_factor.h"
+#include "../factor/imu_wheel_line_factor_2.h"
 #include "../factor/plane_factor.h"
 #include "../factor/wheel_factor.h"
 #include "../factor/pose_local_parameterization.h"
@@ -174,7 +175,7 @@ class Estimator
 
     IntegrationBase *pre_integrations[(WINDOW_SIZE + 1)];
     WheelIntegrationBase *pre_integrations_wheel[(WINDOW_SIZE + 1)];
-    Vector3d acc_0, gyr_0;
+    Vector3d acc_0, gyr_0, vel_0;
 
     Vector3d vel_0_wheel, gyr_0_wheel;
 
@@ -207,8 +208,8 @@ class Estimator
 
 
     double para_Pose[WINDOW_SIZE + 1][SIZE_POSE];
-//    double para_SpeedBias[WINDOW_SIZE + 1][SIZE_SPEEDBIAS];
-    double para_SpeedBias[WINDOW_SIZE + 1][SIZE_BIAS];
+    double para_SpeedBias[WINDOW_SIZE + 1][SIZE_SPEEDBIAS];
+//    double para_SpeedBias[WINDOW_SIZE + 1][SIZE_BIAS];
     double para_Gravity[1][SIZE_G];
     double para_TIO[WINDOW_SIZE + 1][SIZE_TIO];
     double para_Feature[NUM_OF_F][SIZE_FEATURE];
@@ -249,7 +250,7 @@ class Estimator
     bool initThreadFlag;
 
     //public test variable
-    double yaw_test, pitch_test, roll_test;
+    double yaw_test, pitch_test, roll_test, tmpR_test;
     double x_test, y_test, z_test;
     Matrix3d R00;
     MatrixXd r_A = MatrixXd::Identity(6, 6);
@@ -301,7 +302,7 @@ class Estimator
 
     Vector3d tio_0 = Vector3d::Zero();
     Matrix3d rio_0 = Matrix3d::Identity();
-//    Matrix3d dR = Matrix3d::Identity();
-    Matrix3d dR = Utility::ypr2R(Vector3d{90,0,0});
+    Matrix3d dR = Matrix3d::Identity();
+//    Matrix3d dR = Utility::ypr2R(Vector3d{90,0,0});
     list<Vector3d> gyr_smooth_list;
 };

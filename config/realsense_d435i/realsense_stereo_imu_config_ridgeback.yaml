@@ -5,6 +5,8 @@
 imu: 1
 wheel: 1
 only_initial_with_wheel: 1  #只利用wheel进行初始化，不加入因子图
+estimate_tio: 1
+estimate_rio: 0
 plane: 0
 num_of_cam: 1
 

@@ -87,6 +87,8 @@ extern int USE_IMU;
 extern int USE_WHEEL;
 extern int USE_PLANE;
 extern int ONLY_INITIAL_WITH_WHEEL;
+extern int ESTIMATE_TIO;
+extern int ESTIMATE_RIO;
 extern int MULTIPLE_THREAD;
 // pts_gt for debug purpose;
 extern map<int, Eigen::Vector3d> pts_gt;
@@ -122,6 +124,7 @@ enum StateOrder
     O_V = 6,
     O_BA = 9,
     O_BG = 12,
+    O_VO = 15,
 //    O_SX = 0,
 //    O_SY = 1,
 //    O_SW = 2

@@ -7,7 +7,7 @@
  * you may not use this file except in compliance with the License.
  *******************************************************/
 
-// This is the modified version for DeltaR ver.2
+// This is the modified version for DeltaR
 
 #pragma once
 
@@ -25,7 +25,7 @@ class IntegrationBase
                     const Eigen::Vector3d &_linearized_ba, const Eigen::Vector3d &_linearized_bg)
         : acc_0{_acc_0}, gyr_0{_gyr_0}, linearized_acc{_acc_0}, linearized_gyr{_gyr_0},
           linearized_ba{_linearized_ba}, linearized_bg{_linearized_bg},
-            jacobian{Eigen::Matrix<double, 15, 15>::Identity()}, covariance{Eigen::Matrix<double, 18, 18>::Zero()},
+            jacobian{Eigen::Matrix<double, 15, 15>::Identity()}, covariance{Eigen::Matrix<double, 15, 15>::Zero()}, covariance_1{Eigen::Matrix<double, 21, 21>::Zero()},
           sum_dt{0.0}, delta_p{Eigen::Vector3d::Zero()}, delta_q{Eigen::Quaterniond::Identity()}, delta_v{Eigen::Vector3d::Zero()}
 
     {
@@ -155,10 +155,7 @@ class IntegrationBase
             step_jacobian = F;
             step_V = V;
             jacobian = F * jacobian;//这个是累计的雅可比，用于预积分的bias update，是因为状态量里包含bias，通过链式法则可以得到该雅可比递推式
-            covariance.block<15, 15>(0, 0) = F * covariance.block<15, 15>(0, 0) * F.transpose() + V * noise * V.transpose();//协方差传递
-            covariance.block<3, 3>(15, 15) = (VEL_N_wheel * VEL_N_wheel) * Eigen::Matrix3d::Identity() + (GYR_W * GYR_W) * Eigen::Matrix3d::Identity();
-//            covariance.block<3, 3>(15, 15) = (GYR_W * GYR_W) * Eigen::Matrix3d::Identity();
-//            cout << "covariance:\n" << covariance << endl;
+            covariance = F * covariance * F.transpose() + V * noise * V.transpose();//协方差传递
         }
 
     }
@@ -193,11 +190,11 @@ class IntegrationBase
      
     }
 
-    Eigen::Matrix<double, 18, 1> evaluate(const Eigen::Vector3d &Pi, const Eigen::Quaterniond &Qi, const Eigen::Vector3d &Vi, const Eigen::Vector3d &Bai, const Eigen::Vector3d &Bgi,
-                                          const Eigen::Vector3d &Pj, const Eigen::Quaterniond &Qj, const Eigen::Vector3d &Vj, const Eigen::Vector3d &Baj, const Eigen::Vector3d &Bgj,
+    Eigen::Matrix<double, 15, 1> evaluate(const Eigen::Vector3d &Pi, const Eigen::Quaterniond &Qi, const Eigen::Vector3d &Bai, const Eigen::Vector3d &Bgi,
+                                          const Eigen::Vector3d &Pj, const Eigen::Quaterniond &Qj, const Eigen::Vector3d &Baj, const Eigen::Vector3d &Bgj,
                                           const Eigen::Vector3d &TIO, const Eigen::Quaterniond &dR)
     {
-        Eigen::Matrix<double, 18, 1> residuals;
+        Eigen::Matrix<double, 15, 1> residuals;
 
         Eigen::Matrix3d dp_dba = jacobian.block<3, 3>(O_P, O_BA);
         Eigen::Matrix3d dp_dbg = jacobian.block<3, 3>(O_P, O_BG);
@@ -228,16 +225,12 @@ class IntegrationBase
                 w_x_1(2), 0, -w_x_1(0),
                 -w_x_1(1), w_x_1(0), 0;
 //        ROS_WARN_STREAM("gyr0 1  " << endl << gyr_0.transpose());  //No problem
-        Vector3d vel_0 = vel_buf[0];
-        Vector3d vel_1 = vel_buf[vel_buf.size()-1];
-        Vector3d dV = vel_1-vel_0;
 
-        residuals.block<3, 1>(O_P, 0) = Qi.inverse() * (0.5 * G * sum_dt * sum_dt + Pj - Pi - Vi * sum_dt) - corrected_delta_p;
+        residuals.block<3, 1>(O_P, 0) = Qi.inverse() * (0.5 * G * sum_dt * sum_dt + Pj - Pi) - corrected_delta_p - RIC[0] * R0.transpose() * dR * vel_buf[0] * sum_dt + R_w_0 * TIO * sum_dt ;
         residuals.block<3, 1>(O_R, 0) = 2 * (corrected_delta_q.inverse() * (Qi.inverse() * Qj)).vec();
-        residuals.block<3, 1>(O_V, 0) = Qi.inverse() * (G * sum_dt + Vj - Vi) - corrected_delta_v;
+        residuals.block<3, 1>(O_V, 0) = Qi.inverse() * (G * sum_dt ) - corrected_delta_v + Qi.inverse() * Qj * (RIC[0] * R0.transpose() * dR * vel_buf[vel_buf.size() - 1] - R_w_1 * TIO) - (RIC[0] * R0.transpose() * dR * vel_buf[0] - R_w_0 * TIO);
         residuals.block<3, 1>(O_BA, 0) = Baj - Bai;
         residuals.block<3, 1>(O_BG, 0) = Bgj - Bgi;
-        residuals.block<3, 1>(O_VO, 0) = dV - dR * R0 * RIC[0].transpose() * (Qj.inverse() * Vj - Qi.inverse() * Vi - R_w_1 * TIO + R_w_0 * TIO);
         return residuals;
     }
 
@@ -248,10 +241,11 @@ class IntegrationBase
     const Eigen::Vector3d linearized_acc, linearized_gyr;
     Eigen::Vector3d linearized_ba, linearized_bg;
 
-    Eigen::Matrix<double, 15, 15> jacobian;
+    Eigen::Matrix<double, 15, 15> jacobian, covariance;
+    Eigen::Matrix<double, 21, 21> covariance_1;
     Eigen::Matrix<double, 15, 15> step_jacobian;
     Eigen::Matrix<double, 15, 18> step_V;
-    Eigen::Matrix<double, 18, 18> noise, covariance;
+    Eigen::Matrix<double, 18, 18> noise;
 
     double sum_dt;
     Eigen::Vector3d delta_p;

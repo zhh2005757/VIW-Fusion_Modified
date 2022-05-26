@@ -47,9 +47,10 @@ void wheel_callback(const nav_msgs::OdometryConstPtr &odom_msg)
 {
     double t = odom_msg->header.stamp.toSec();
     double dx = odom_msg->twist.twist.linear.x;
-//    double dy = odom_msg->twist.twist.linear.y;
-    double dy = 0.0;
+    double dy = odom_msg->twist.twist.linear.y;
+//    double dy = 0.00005;
     double dz = odom_msg->twist.twist.linear.z;
+//    double dz = 0.00005;
     double rx = odom_msg->twist.twist.angular.x;
     double ry = odom_msg->twist.twist.angular.y;
     double rz = odom_msg->twist.twist.angular.z;

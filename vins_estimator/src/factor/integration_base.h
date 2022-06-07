@@ -17,17 +17,30 @@
 #include <ceres/ceres.h>
 using namespace Eigen;
 
+#if WHEEL
 class IntegrationBase
 {
   public:
     IntegrationBase() = delete;
-    IntegrationBase(const Eigen::Vector3d &_acc_0, const Eigen::Vector3d &_gyr_0,
+    IntegrationBase(const Eigen::Vector3d &_acc_0, const Eigen::Vector3d &_gyr_0, const Eigen::Vector3d &_vel_0,
                     const Eigen::Vector3d &_linearized_ba, const Eigen::Vector3d &_linearized_bg)
-        : acc_0{_acc_0}, gyr_0{_gyr_0}, linearized_acc{_acc_0}, linearized_gyr{_gyr_0},
+        : acc_0{_acc_0}, gyr_0{_gyr_0}, linearized_acc{_acc_0}, linearized_gyr{_gyr_0}, linearized_vel{_vel_0},
           linearized_ba{_linearized_ba}, linearized_bg{_linearized_bg},
             jacobian{Eigen::Matrix<double, 15, 15>::Identity()}, covariance{Eigen::Matrix<double, 18, 18>::Zero()},
           sum_dt{0.0}, delta_p{Eigen::Vector3d::Zero()}, delta_q{Eigen::Quaterniond::Identity()}, delta_v{Eigen::Vector3d::Zero()}
 
+#else
+class IntegrationBase
+{
+public:
+    IntegrationBase() = delete;
+    IntegrationBase(const Eigen::Vector3d &_acc_0, const Eigen::Vector3d &_gyr_0,
+                    const Eigen::Vector3d &_linearized_ba, const Eigen::Vector3d &_linearized_bg)
+            : acc_0{_acc_0}, gyr_0{_gyr_0}, linearized_acc{_acc_0}, linearized_gyr{_gyr_0},
+              linearized_ba{_linearized_ba}, linearized_bg{_linearized_bg},
+              jacobian{Eigen::Matrix<double, 15, 15>::Identity()}, covariance{Eigen::Matrix<double, 18, 18>::Zero()},
+              sum_dt{0.0}, delta_p{Eigen::Vector3d::Zero()}, delta_q{Eigen::Quaterniond::Identity()}, delta_v{Eigen::Vector3d::Zero()}
+#endif
     {
         noise = Eigen::Matrix<double, 18, 18>::Zero();
         noise.block<3, 3>(0, 0) =  (ACC_N * ACC_N) * Eigen::Matrix3d::Identity();
@@ -55,13 +68,15 @@ class IntegrationBase
 //        if(vel_buf.empty()){
 //            ROS_WARN_STREAM("vel_0 " << endl << vel.transpose());
 //        }
+        volatile double dt_0 = dt;
+//        ROS_WARN_STREAM("dt " << dt_0);
         dt_buf.push_back(dt);
         acc_buf.push_back(acc);
         gyr_buf.push_back(gyr);
 //        ROS_WARN_STREAM("gyr 0 " << endl << gyr);
         vel_buf.push_back(vel);
 //        ROS_WARN_STREAM("vel 0 " << endl << vel);
-        propagate(dt, acc, gyr);
+        propagate(dt, acc, gyr, vel);
     }
     /* IMU */
 
@@ -98,7 +113,7 @@ class IntegrationBase
         result_delta_p = delta_p + delta_v * _dt + 0.5 * un_acc * _dt * _dt;
         result_delta_v = delta_v + un_acc * _dt;
         result_linearized_ba = linearized_ba;
-        result_linearized_bg = linearized_bg;         
+        result_linearized_bg = linearized_bg;
 
         if(update_jacobian)
         {
@@ -193,6 +208,37 @@ class IntegrationBase
      
     }
 
+    void propagate(double _dt, const Eigen::Vector3d &_acc_1, const Eigen::Vector3d &_gyr_1, const Eigen::Vector3d &_vel_1)
+    {
+        dt = _dt;
+        acc_1 = _acc_1;
+        gyr_1 = _gyr_1;
+        vel_1 = _vel_1;
+        Vector3d result_delta_p;
+        Quaterniond result_delta_q;
+        Vector3d result_delta_v;
+        Vector3d result_linearized_ba;
+        Vector3d result_linearized_bg;
+
+        midPointIntegration(_dt, acc_0, gyr_0, _acc_1, _gyr_1, delta_p, delta_q, delta_v,
+                            linearized_ba, linearized_bg,
+                            result_delta_p, result_delta_q, result_delta_v,
+                            result_linearized_ba, result_linearized_bg, 1);
+
+//        checkJacobian(_dt, acc_0, gyr_0, acc_1, gyr_1, delta_p, delta_q, delta_v,
+//                            linearized_ba, linearized_bg);
+        delta_p = result_delta_p;
+        delta_q = result_delta_q;
+        delta_v = result_delta_v;
+        linearized_ba = result_linearized_ba;
+        linearized_bg = result_linearized_bg;
+        delta_q.normalize();
+        sum_dt += dt;
+        acc_0 = acc_1;
+        gyr_0 = gyr_1;
+        vel_0 = vel_1;
+    }
+
     Eigen::Matrix<double, 18, 1> evaluate(const Eigen::Vector3d &Pi, const Eigen::Quaterniond &Qi, const Eigen::Vector3d &Vi, const Eigen::Vector3d &Bai, const Eigen::Vector3d &Bgi,
                                           const Eigen::Vector3d &Pj, const Eigen::Quaterniond &Qj, const Eigen::Vector3d &Vj, const Eigen::Vector3d &Baj, const Eigen::Vector3d &Bgj,
                                           const Eigen::Vector3d &TIO, const Eigen::Quaterniond &dR)
@@ -216,21 +262,19 @@ class IntegrationBase
 
         Matrix3d R_w_0;
 //        Vector3d w_x_0 = -R0 * RIC[0].transpose() * (gyr_buf[0] - linearized_bg);
-        Vector3d w_x_0 = gyr_buf[0] - linearized_bg;
+        Vector3d w_x_0 = linearized_gyr - linearized_bg;
         R_w_0 << 0, -w_x_0(2), w_x_0(1),
                 w_x_0(2), 0, -w_x_0(0),
                 -w_x_0(1), w_x_0(0), 0;
 
         Matrix3d R_w_1;
 //        Vector3d w_x_1 = -R0 * RIC[0].transpose() * (gyr_0 - linearized_bg);
-        Vector3d w_x_1 = gyr_buf[gyr_buf.size() - 1] - linearized_bg;
+        Vector3d w_x_1 = gyr_1 - linearized_bg;
         R_w_1 << 0, -w_x_1(2), w_x_1(1),
                 w_x_1(2), 0, -w_x_1(0),
                 -w_x_1(1), w_x_1(0), 0;
 //        ROS_WARN_STREAM("gyr0 1  " << endl << gyr_0.transpose());  //No problem
-        Vector3d vel_0 = vel_buf[0];
-        Vector3d vel_1 = vel_buf[vel_buf.size()-1];
-        Vector3d dV = vel_1-vel_0;
+        Vector3d dV = vel_1 - linearized_vel;
 
         residuals.block<3, 1>(O_P, 0) = Qi.inverse() * (0.5 * G * sum_dt * sum_dt + Pj - Pi - Vi * sum_dt) - corrected_delta_p;
         residuals.block<3, 1>(O_R, 0) = 2 * (corrected_delta_q.inverse() * (Qi.inverse() * Qj)).vec();
@@ -242,10 +286,10 @@ class IntegrationBase
     }
 
     double dt;
-    Eigen::Vector3d acc_0, gyr_0;
-    Eigen::Vector3d acc_1, gyr_1;
+    Eigen::Vector3d acc_0, gyr_0, vel_0;
+    Eigen::Vector3d acc_1, gyr_1, vel_1;
 
-    const Eigen::Vector3d linearized_acc, linearized_gyr;
+    const Eigen::Vector3d linearized_acc, linearized_gyr, linearized_vel;
     Eigen::Vector3d linearized_ba, linearized_bg;
 
     Eigen::Matrix<double, 15, 15> jacobian;

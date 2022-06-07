@@ -517,7 +517,7 @@ void Estimator::processMeasurements()
             if(USE_WHEEL)
                 getWheelInterval(prevTime_wheel, curTime_wheel, velWheelVector, gyrWheelVector);
             mWheelBuf.unlock();
-
+#if !WHEEL
             if(USE_IMU && !USE_WHEEL)
             {
                 if(!initFirstPoseFlag)
@@ -536,10 +536,12 @@ void Estimator::processMeasurements()
                     processIMU(accVector[i].first, dt, accVector[i].second, gyrVector[i].second);
                 }
             }
+#else
             if(USE_IMU && USE_WHEEL)
             {
                 /* IMU */
                 size_t k=0;
+//                ROS_WARN_STREAM("curTime " << curTime);
                 /* IMU */
 
 //                ROS_WARN_STREAM("velWheelVector size " << velWheelVector.size());
@@ -553,115 +555,143 @@ void Estimator::processMeasurements()
                         dt = velWheelVector[i].first - prevTime_wheel;
 
                         /* IMU */
-                        Vector3d inter_vel = (velWheelVector[i+1].second + velWheelVector[i].second) / 2.0;
-                        while(accVector[k].first < velWheelVector[i+1].first){
-//                            ROS_WARN_STREAM("k is " << k);
+                        while(accVector[k].first < velWheelVector[i].first && k < accVector.size()){
+//                            ROS_WARN_STREAM("k-a is " << k);
+                            Vector3d tmpGyrVec = gyrVector[k].second;
 
-                            gyr_smooth_list.push_back(gyrVector[k].second);
-                            Vector3d tmpGyrVec;
-                            Vector3d gyr_sum = Vector3d::Zero();
-                            if(gyr_smooth_list.size() < 10){
-                                tmpGyrVec = gyrVector[k].second;
-                            }else{
-                                for (const Vector3d &gyr : gyr_smooth_list) {
-                                    gyr_sum = gyr_sum + gyr;
-                                }
-                                tmpGyrVec = gyr_sum / gyr_smooth_list.size();
-                                gyr_smooth_list.pop_front();
-                            }
-
-                            //获取两帧IMU数据之间的dt
-                            double dt;
-                            if(k == 0)
-                                dt = accVector[k].first - prevTime;
-                            else if (k == accVector.size() - 1)
-                                dt = curTime - accVector[k - 1].first;
-                            else
-                                dt = accVector[k].first - accVector[k - 1].first;
-                            //预积分,并通过惯性解算得到Rs, Ps, Vs初值，用于后续processImage
-                            if (accVector[k].first < velWheelVector[i].first) {
-                                processIMU(accVector[k].first, dt, accVector[k].second, tmpGyrVec, velWheelVector[i].second);
-//                                ROS_WARN_STREAM("gyrVector " << gyrVector[k].second);
-                            }else {
-                                processIMU(accVector[k].first, dt, accVector[k].second, tmpGyrVec, inter_vel);
-//                                ROS_WARN_STREAM("gyrVector " << gyrVector[k].second);
-                            }
-                            k++;
-                        }
-                        /* IMU */
-
-                    }
-                    else if (i == velWheelVector.size() - 2){
-                        /* IMU */
-                        Vector3d inter_vel = (velWheelVector[i+1].second + velWheelVector[i].second) / 2.0;
-                        while(accVector[k].first > velWheelVector[i].first && k < accVector.size()){
-                            ROS_WARN_STREAM("k is " << k);
-
-                            gyr_smooth_list.push_back(gyrVector[k].second);
-                            Vector3d tmpGyrVec;
-                            Vector3d gyr_sum = Vector3d::Zero();
-                            if(gyr_smooth_list.size() < 10){
-                                tmpGyrVec = gyrVector[k].second;
-                            }else{
-                                for (const Vector3d &gyr : gyr_smooth_list) {
-                                    gyr_sum = gyr_sum + gyr;
-                                }
-                                tmpGyrVec = gyr_sum / gyr_smooth_list.size();
-                                gyr_smooth_list.pop_front();
-                            }
+//                            gyr_smooth_list.push_back(gyrVector[k].second);
+//                            Vector3d tmpGyrVec;
+//                            Vector3d gyr_sum = Vector3d::Zero();
+//                            if(gyr_smooth_list.size() < 10){
+//                                tmpGyrVec = gyrVector[k].second;
+//                            }else{
+//                                for (const Vector3d &gyr : gyr_smooth_list) {
+//                                    gyr_sum = gyr_sum + gyr;
+//                                }
+//                                tmpGyrVec = gyr_sum / gyr_smooth_list.size();
+//                                gyr_smooth_list.pop_front();
+//                            }
 
                             //获取两帧IMU数据之间的dt
-                            double dt;
+                            double dt_0;
                             if(k == 0)
-                                dt = accVector[k].first - prevTime;
+                                dt_0 = accVector[k].first - prevTime;
                             else if (k == accVector.size() - 1)
-                                dt = curTime - accVector[k - 1].first;
+                                dt_0 = curTime - accVector[k - 1].first;
                             else
-                                dt = accVector[k].first - accVector[k - 1].first;
+                                dt_0 = accVector[k].first - accVector[k - 1].first;
+//                            ROS_WARN_STREAM("dt_0  " << dt_0);
                             //预积分,并通过惯性解算得到Rs, Ps, Vs初值，用于后续processImage
-                            if (accVector[k].first > velWheelVector[i+1].first) {
-                                processIMU(accVector[k].first, dt, accVector[k].second, tmpGyrVec,
-                                           velWheelVector[i + 1].second);
+//                            ROS_WARN_STREAM("accVector[k].second.norm() " << accVector[k].second.norm());
+                            processIMU(accVector[k].first, dt_0, accVector[k].second, tmpGyrVec, velWheelVector[i].second);
 //                                ROS_WARN_STREAM("gyrVector " << gyrVector[k].second);
-                            }else {
-                                processIMU(accVector[k].first, dt, accVector[k].second, tmpGyrVec, inter_vel);
-//                                ROS_WARN_STREAM("gyrVector " << gyrVector[k].second);
-                            }
                             k++;
                         }
                         /* IMU */
                     }
-                    else if (i == velWheelVector.size() - 1)
+                    else if (i == velWheelVector.size() - 1) {
                         dt = curTime_wheel - velWheelVector[i - 1].first;
+
+                        /* IMU */
+                        Vector3d inter_vel = (velWheelVector[i-1].second + velWheelVector[i].second) / 2.0;
+                        while(accVector[k].first > velWheelVector[i-1].first && accVector[k].first < velWheelVector[i].first && k < accVector.size()){
+                            Vector3d tmpGyrVec = gyrVector[k].second;
+//                            ROS_WARN_STREAM("k-b is " << k);
+//                            gyr_smooth_list.push_back(gyrVector[k].second);
+//                            Vector3d tmpGyrVec;
+//                            Vector3d gyr_sum = Vector3d::Zero();
+//                            if(gyr_smooth_list.size() < 10){
+//                                tmpGyrVec = gyrVector[k].second;
+//                            }else{
+//                                for (const Vector3d &gyr : gyr_smooth_list) {
+//                                    gyr_sum = gyr_sum + gyr;
+//                                }
+//                                tmpGyrVec = gyr_sum / gyr_smooth_list.size();
+//                                gyr_smooth_list.pop_front();
+//                            }
+                            //获取两帧IMU数据之间的dt
+                            double dt_0;
+                            if(k == 0)
+                                dt_0 = accVector[k].first - prevTime;
+                            else if (k == accVector.size() - 1)
+                                dt_0 = curTime - accVector[k - 1].first;
+                            else
+                                dt_0 = accVector[k].first - accVector[k - 1].first;
+//                            ROS_WARN_STREAM("dt_0  " << dt_0);
+                            //预积分,并通过惯性解算得到Rs, Ps, Vs初值，用于后续processImage
+//                            ROS_WARN_STREAM("accVector[k].second.norm() " << accVector[k].second.norm());
+                            processIMU(accVector[k].first, dt_0, accVector[k].second, tmpGyrVec, inter_vel);
+//                            ROS_WARN_STREAM("gyrVector " << gyrVector[k].second);
+                            k++;
+                        }
+                        /* IMU */
+
+                        /* IMU */
+                        while(accVector[k].first > velWheelVector[i].first && k < accVector.size()){
+//                            ROS_WARN_STREAM("k-c is " << k);
+                            Vector3d tmpGyrVec = gyrVector[k].second;
+//                            gyr_smooth_list.push_back(gyrVector[k].second);
+//                            Vector3d tmpGyrVec;
+//                            Vector3d gyr_sum = Vector3d::Zero();
+//                            if(gyr_smooth_list.size() < 10){
+//                                tmpGyrVec = gyrVector[k].second;
+//                            }else{
+//                                for (const Vector3d &gyr : gyr_smooth_list) {
+//                                    gyr_sum = gyr_sum + gyr;
+//                                }
+//                                tmpGyrVec = gyr_sum / gyr_smooth_list.size();
+//                                gyr_smooth_list.pop_front();
+//                            }
+
+                            //获取两帧IMU数据之间的dt
+                            double dt_0;
+                            if(k == 0)
+                                dt_0 = accVector[k].first - prevTime;
+                            else if (k == accVector.size() - 1)
+                                dt_0 = curTime - accVector[k - 1].first;
+                            else
+                                dt_0 = accVector[k].first - accVector[k - 1].first;
+//                            ROS_WARN_STREAM("dt_0  " << dt_0);
+                            //预积分,并通过惯性解算得到Rs, Ps, Vs初值，用于后续processImage
+//                            ROS_WARN_STREAM("accVector[k].second.norm() " << accVector[k].second.norm());
+                            processIMU(accVector[k].first, dt_0, accVector[k].second, tmpGyrVec, velWheelVector[i].second);
+//                                ROS_WARN_STREAM("gyrVector " << gyrVector[k].second);
+                            k++;
+                        }
+                        /* IMU */
+                    }
                     else {
                         dt = velWheelVector[i].first - velWheelVector[i - 1].first;
 
                         /* IMU */
-                        Vector3d inter_vel = (velWheelVector[i+1].second + velWheelVector[i].second) / 2.0;
-                        while(accVector[k].first > velWheelVector[i].first && accVector[k].first < velWheelVector[i+1].first){
-//                            ROS_WARN_STREAM("k is " << k);
-                            gyr_smooth_list.push_back(gyrVector[k].second);
-                            Vector3d tmpGyrVec;
-                            Vector3d gyr_sum = Vector3d::Zero();
-                            if(gyr_smooth_list.size() < 10){
-                                tmpGyrVec = gyrVector[k].second;
-                            }else{
-                                for (const Vector3d &gyr : gyr_smooth_list) {
-                                    gyr_sum = gyr_sum + gyr;
-                                }
-                                tmpGyrVec = gyr_sum / gyr_smooth_list.size();
-                                gyr_smooth_list.pop_front();
-                            }
+                        Vector3d inter_vel = (velWheelVector[i-1].second + velWheelVector[i].second) / 2.0;
+                        while(accVector[k].first > velWheelVector[i-1].first && accVector[k].first < velWheelVector[i].first && k < accVector.size()){
+//                            ROS_WARN_STREAM("k-b is " << k);
+                            Vector3d tmpGyrVec = gyrVector[k].second;
+//                            gyr_smooth_list.push_back(gyrVector[k].second);
+//                            Vector3d tmpGyrVec;
+//                            Vector3d gyr_sum = Vector3d::Zero();
+//                            if(gyr_smooth_list.size() < 10){
+//                                tmpGyrVec = gyrVector[k].second;
+//                            }else{
+//                                for (const Vector3d &gyr : gyr_smooth_list) {
+//                                    gyr_sum = gyr_sum + gyr;
+//                                }
+//                                tmpGyrVec = gyr_sum / gyr_smooth_list.size();
+//                                gyr_smooth_list.pop_front();
+//                            }
                             //获取两帧IMU数据之间的dt
-                            double dt;
+                            double dt_0;
                             if(k == 0)
-                                dt = accVector[k].first - prevTime;
+                                dt_0 = accVector[k].first - prevTime;
                             else if (k == accVector.size() - 1)
-                                dt = curTime - accVector[k - 1].first;
+                                dt_0 = curTime - accVector[k - 1].first;
                             else
-                                dt = accVector[k].first - accVector[k - 1].first;
+                                dt_0 = accVector[k].first - accVector[k - 1].first;
+//                            ROS_WARN_STREAM("dt_0  " << dt_0);
                             //预积分,并通过惯性解算得到Rs, Ps, Vs初值，用于后续processImage
-                            processIMU(accVector[k].first, dt, accVector[k].second, tmpGyrVec, inter_vel);
+//                            ROS_WARN_STREAM("accVector[k].second.norm() " << accVector[k].second.norm());
+                            processIMU(accVector[k].first, dt_0, accVector[k].second, tmpGyrVec, inter_vel);
 //                            ROS_WARN_STREAM("gyrVector " << gyrVector[k].second);
                             k++;
                         }
@@ -671,6 +701,7 @@ void Estimator::processMeasurements()
                     processWheel(velWheelVector[i].first, dt, velWheelVector[i].second, gyrWheelVector[i].second);
                 }
             }
+#endif
             if (!static_init_flag && static_flag){
                 static_init_flag = static_initialize();
             }
@@ -748,7 +779,7 @@ void Estimator::initFirstPose(Eigen::Vector3d p, Eigen::Matrix3d r)
     initR = r;
 }
 
-
+#if !WHEEL
 void Estimator::processIMU(double t, double dt, const Vector3d &linear_acceleration, const Vector3d &angular_velocity)
 {
     if (!first_imu)//第一帧IMU
@@ -805,7 +836,7 @@ void Estimator::processIMU(double t, double dt, const Vector3d &linear_accelerat
         angular_buf.pop();
     }
 }
-
+#else
 void Estimator::processIMU(double t, double dt, const Vector3d &linear_acceleration, const Vector3d &angular_velocity, const Vector3d &wheel_velocity)
 {
     if (!first_imu)//第一帧IMU
@@ -813,6 +844,7 @@ void Estimator::processIMU(double t, double dt, const Vector3d &linear_accelerat
         first_imu = true;
         acc_0 = linear_acceleration;//始终为中值积分里的第一个数据
         gyr_0 = angular_velocity;
+        vel_0 = wheel_velocity;
         oldest_time = t;
     }
     if (!static_init_flag && static_flag) {
@@ -828,7 +860,7 @@ void Estimator::processIMU(double t, double dt, const Vector3d &linear_accelerat
 
     if (!pre_integrations[frame_count])
     {
-        pre_integrations[frame_count] = new IntegrationBase{acc_0, gyr_0, Bas[frame_count], Bgs[frame_count]};
+        pre_integrations[frame_count] = new IntegrationBase{acc_0, gyr_0, vel_0, Bas[frame_count], Bgs[frame_count]};//重建一个新的，为下一次processIMU做准备
     }
     if (frame_count != 0)//frame_count+1指代的是frame_cout帧的预积分， 可以从optimization中添加预积分约束中发现
     {
@@ -854,6 +886,7 @@ void Estimator::processIMU(double t, double dt, const Vector3d &linear_accelerat
     }
     acc_0 = linear_acceleration;
     gyr_0 = angular_velocity;
+    vel_0 = wheel_velocity;
 
     // checkLine and checkZeroV
     if(angular_buf.size() < 5) {
@@ -864,6 +897,7 @@ void Estimator::processIMU(double t, double dt, const Vector3d &linear_accelerat
         angular_buf.pop();
     }
 }
+#endif
 
 void Estimator::processWheel(double t, double dt, const Vector3d &linear_velocity, const Vector3d &angular_velocity)
 {
@@ -957,7 +991,11 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
     imageframe.pre_integration = tmp_pre_integration;//tmp_pre_intergration在前面processIMU计算得到
     imageframe.pre_integration_wheel = tmp_wheel_pre_integration;//tmp_wheel_pre_intergration在前面processWheel计算得到
     all_image_frame.insert(make_pair(header, imageframe));
+#if WHEEL
+    tmp_pre_integration = new IntegrationBase{acc_0, gyr_0, vel_0, Bas[frame_count], Bgs[frame_count]};//重建一个新的，为下一次processIMU做准备
+#else
     tmp_pre_integration = new IntegrationBase{acc_0, gyr_0, Bas[frame_count], Bgs[frame_count]};//重建一个新的，为下一次processIMU做准备
+#endif
     tmp_wheel_pre_integration = new WheelIntegrationBase{vel_0_wheel, gyr_0_wheel, sx, sy, sw, td_wheel};//重建一个新的，为下一次processWheel做准备
 
 
@@ -998,7 +1036,6 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
                 if(result)
                 {
                     optimization();
-//                    return;
                     updateLatestStates();
                     solver_flag = NON_LINEAR;
                     slideWindow();
@@ -1806,7 +1843,7 @@ void Estimator::double2vector()
 //                -w_x_0(1), w_x_0(0), 0;
 
         Matrix3d R_w_0;
-        Vector3d vel_0;
+//        Vector3d vel_0;
 
         for (int i = 0; i <= WINDOW_SIZE; i++)
         {
@@ -1827,15 +1864,15 @@ void Estimator::double2vector()
                                         para_SpeedBias[i][2]);
 
             if (i == 0) {
-                vel_0 = pre_integrations[i + 1]->vel_buf[0];
-                Vector3d w_x_0 = pre_integrations[i + 1]->gyr_buf[0] - pre_integrations[i + 1]->linearized_bg;
+//                vel_0 = pre_integrations[i + 1]->linearized_vel;
+                Vector3d w_x_0 = pre_integrations[i + 1]->linearized_gyr - pre_integrations[i + 1]->linearized_bg;
                 R_w_0 << 0, -w_x_0(2), w_x_0(1),
                         w_x_0(2), 0, -w_x_0(0),
                         -w_x_0(1), w_x_0(0), 0;
 //                ROS_WARN("Here is the test 1");
             }else{
-                vel_0 = pre_integrations[i]->vel_buf[pre_integrations[i]->vel_buf.size() - 1];
-                Vector3d w_x_0 = pre_integrations[i]->gyr_buf[pre_integrations[i]->gyr_buf.size() - 1] - pre_integrations[i]->linearized_bg;
+//                vel_0 = pre_integrations[i]->vel_1;
+                Vector3d w_x_0 = pre_integrations[i]->gyr_1 - pre_integrations[i]->linearized_bg;
 //                ROS_WARN_STREAM("pre_integrations[i]->gyr_buf " << pre_integrations[i]->gyr_buf.size());
 //                ROS_WARN_STREAM("linearized_bg " << pre_integrations[i]->linearized_bg);
 //                ROS_WARN_STREAM("vel 0 " << vel_0.transpose());
@@ -2556,6 +2593,7 @@ void Estimator::slideWindow()
                 Headers[i] = Headers[i + 1];
                 Rs[i].swap(Rs[i + 1]);
                 Ps[i].swap(Ps[i + 1]);
+#if !WHEEL
                 if(USE_IMU && !USE_WHEEL)
                 {
                     std::swap(pre_integrations[i], pre_integrations[i + 1]);
@@ -2568,6 +2606,7 @@ void Estimator::slideWindow()
                     Bas[i].swap(Bas[i + 1]);
                     Bgs[i].swap(Bgs[i + 1]);
                 }
+#else
                 if(USE_IMU && USE_WHEEL)
                 {
                     std::swap(pre_integrations[i], pre_integrations[i + 1]);
@@ -2581,6 +2620,7 @@ void Estimator::slideWindow()
                     Bas[i].swap(Bas[i + 1]);
                     Bgs[i].swap(Bgs[i + 1]);
                 }
+#endif
                 if(USE_WHEEL)
                 {
                     std::swap(pre_integrations_wheel[i], pre_integrations_wheel[i + 1]);
@@ -2596,6 +2636,22 @@ void Estimator::slideWindow()
             Ps[WINDOW_SIZE] = Ps[WINDOW_SIZE - 1];
             Rs[WINDOW_SIZE] = Rs[WINDOW_SIZE - 1];
 
+#if WHEEL
+            if(USE_IMU && USE_WHEEL)
+            {
+                Vs[WINDOW_SIZE] = Vs[WINDOW_SIZE - 1];
+                Bas[WINDOW_SIZE] = Bas[WINDOW_SIZE - 1];
+                Bgs[WINDOW_SIZE] = Bgs[WINDOW_SIZE - 1];
+
+                delete pre_integrations[WINDOW_SIZE];
+                pre_integrations[WINDOW_SIZE] = new IntegrationBase{acc_0, gyr_0, vel_0, Bas[WINDOW_SIZE], Bgs[WINDOW_SIZE]};
+
+                dt_buf[WINDOW_SIZE].clear();
+                linear_acceleration_buf[WINDOW_SIZE].clear();
+                angular_velocity_buf[WINDOW_SIZE].clear();
+                vel_velocity_buf[WINDOW_SIZE].clear();
+            }
+#else
             if(USE_IMU && !USE_WHEEL)
             {
                 Vs[WINDOW_SIZE] = Vs[WINDOW_SIZE - 1];
@@ -2609,21 +2665,7 @@ void Estimator::slideWindow()
                 linear_acceleration_buf[WINDOW_SIZE].clear();
                 angular_velocity_buf[WINDOW_SIZE].clear();
             }
-
-            if(USE_IMU && USE_WHEEL)
-            {
-                Vs[WINDOW_SIZE] = Vs[WINDOW_SIZE - 1];
-                Bas[WINDOW_SIZE] = Bas[WINDOW_SIZE - 1];
-                Bgs[WINDOW_SIZE] = Bgs[WINDOW_SIZE - 1];
-
-                delete pre_integrations[WINDOW_SIZE];
-                pre_integrations[WINDOW_SIZE] = new IntegrationBase{acc_0, gyr_0, Bas[WINDOW_SIZE], Bgs[WINDOW_SIZE]};
-
-                dt_buf[WINDOW_SIZE].clear();
-                linear_acceleration_buf[WINDOW_SIZE].clear();
-                angular_velocity_buf[WINDOW_SIZE].clear();
-                vel_velocity_buf[WINDOW_SIZE].clear();
-            }
+#endif
 
             if(USE_WHEEL)
             {
@@ -2655,7 +2697,7 @@ void Estimator::slideWindow()
             Headers[frame_count - 1] = Headers[frame_count];
             Ps[frame_count - 1] = Ps[frame_count];
             Rs[frame_count - 1] = Rs[frame_count];
-
+#if !WHEEL
             if(USE_IMU && !USE_WHEEL) //IMU数据衔接，预积分的传播
             {
                 for (unsigned int i = 0; i < dt_buf[frame_count].size(); i++)
@@ -2682,6 +2724,7 @@ void Estimator::slideWindow()
                 linear_acceleration_buf[WINDOW_SIZE].clear();
                 angular_velocity_buf[WINDOW_SIZE].clear();
             }
+#else
             if(USE_IMU && USE_WHEEL) //IMU数据衔接，预积分的传播
             {
                 for (unsigned int i = 0; i < dt_buf[frame_count].size(); i++)
@@ -2691,6 +2734,7 @@ void Estimator::slideWindow()
                     Vector3d tmp_angular_velocity = angular_velocity_buf[frame_count][i];
                     Vector3d tmp_wheel_velocity = vel_velocity_buf[frame_count][i];
 
+                    ROS_WARN_STREAM("tmp_dt " << tmp_dt);
                     pre_integrations[frame_count - 1]->push_back(tmp_dt, tmp_linear_acceleration, tmp_angular_velocity, tmp_wheel_velocity); //预积分的传播
 
                     dt_buf[frame_count - 1].push_back(tmp_dt); //TODO(tzhang): 数据保存有冗余，integration_base中也保存了同样的数据
@@ -2704,13 +2748,14 @@ void Estimator::slideWindow()
                 Bgs[frame_count - 1] = Bgs[frame_count];
 
                 delete pre_integrations[WINDOW_SIZE];
-                pre_integrations[WINDOW_SIZE] = new IntegrationBase{acc_0, gyr_0, Bas[WINDOW_SIZE], Bgs[WINDOW_SIZE]};
+                pre_integrations[WINDOW_SIZE] = new IntegrationBase{acc_0, gyr_0, vel_0, Bas[WINDOW_SIZE], Bgs[WINDOW_SIZE]};
 
                 dt_buf[WINDOW_SIZE].clear();
                 linear_acceleration_buf[WINDOW_SIZE].clear();
                 angular_velocity_buf[WINDOW_SIZE].clear();
                 vel_velocity_buf[WINDOW_SIZE].clear();
             }
+#endif
             if(USE_WHEEL) //WHEEL数据衔接，预积分的传播
             {
                 for (unsigned int i = 0; i < dt_buf_wheel[frame_count].size(); i++)

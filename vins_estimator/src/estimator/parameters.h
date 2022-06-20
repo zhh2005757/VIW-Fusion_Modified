@@ -18,6 +18,14 @@
 #include <opencv2/core/eigen.hpp>
 #include <fstream>
 #include <map>
+#include <pcl/point_cloud.h>
+#include <pcl/point_types.h>
+#include <sensor_msgs/PointCloud2.h>
+#include <pcl_conversions/pcl_conversions.h>
+#include <pcl/filters/voxel_grid.h>
+#include <pcl/kdtree/kdtree_flann.h>
+
+typedef pcl::PointXYZI PointType;
 
 using namespace std;
 
@@ -31,6 +39,7 @@ extern double MIN_PARALLAX;
 extern int ESTIMATE_EXTRINSIC;
 extern int ESTIMATE_EXTRINSIC_WHEEL;
 extern int ESTIMATE_INTRINSIC_WHEEL;
+extern int ESTIMATE_EXTRINSIC_LIDAR;
 
 extern double ACC_N, ACC_W;
 extern double GYR_N, GYR_W;
@@ -48,6 +57,8 @@ extern std::vector<Eigen::Matrix3d> RIC;
 extern std::vector<Eigen::Vector3d> TIC;
 extern Eigen::Matrix3d RIO;
 extern Eigen::Vector3d TIO;
+extern Eigen::Matrix3d RIL;
+extern Eigen::Vector3d TIL;
 extern Eigen::Matrix3d R0;
 extern Eigen::VectorXd x_ep;
 extern double ff;
@@ -56,6 +67,8 @@ extern Eigen::Vector3d G;
 extern Eigen::Vector3d g;
 extern Eigen::MatrixXd B;
 extern Eigen::Vector2d delta_g;
+extern Eigen::Matrix3d dR;
+extern Eigen::Vector3d tio_0;
 
 extern double BIAS_ACC_THRESHOLD;
 extern double BIAS_GYR_THRESHOLD;
@@ -74,6 +87,7 @@ extern std::string GROUNDTRUTH_PATH;
 extern std::string OUTPUT_FOLDER;
 extern std::string IMU_TOPIC;
 extern std::string WHEEL_TOPIC;
+extern std::string LIDAR_TOPIC;
 extern double TD;
 extern double OFFSET_SIM;
 extern double TD_WHEEL;
@@ -86,6 +100,7 @@ extern int STEREO;
 extern int USE_IMU;
 extern int USE_WHEEL;
 extern int USE_PLANE;
+extern int USE_LIDAR;
 extern int ONLY_INITIAL_WITH_WHEEL;
 extern int ESTIMATE_TIO;
 extern int ESTIMATE_RIO;
@@ -105,6 +120,7 @@ extern int SHOW_TRACK;
 extern int FLOW_BACK;
 
 #define WHEEL 1
+#define USE_IMU_FOR_DESKEW 0
 
 void readParameters(std::string config_file);
 
@@ -115,7 +131,7 @@ enum SIZE_PARAMETERIZATION
     SIZE_SPEEDBIAS = 9,
     SIZE_FEATURE = 1,
     SIZE_G = 4,
-    SIZE_TIO = 7,
+    SIZE_NHC = 7,
     SIZE_BIAS = 6
 };
 
@@ -146,8 +162,16 @@ enum WheelExtrinsicAdjustType{
     ADJUST_WHEEL_NO_Z,
     ADJUST_WHEEL_NO_ROTATION_NO_Z
 };
+enum LidarExtrinsicAdjustType{
+    ADJUST_LIDAR_TRANSLATION,
+    ADJUST_LIDAR_ROTATION,
+    ADJUST_LIDAR_ALL,
+    ADJUST_LIDAR_NO_Z,
+    ADJUST_LIDAR_NO_ROTATION_NO_Z
+};
 extern CameraExtrinsicAdjustType CAM_EXT_ADJ_TYPE;
 extern WheelExtrinsicAdjustType WHEEL_EXT_ADJ_TYPE;
+extern LidarExtrinsicAdjustType LIDAR_EXT_ADJ_TYPE;
 enum NoiseOrder
 {
     O_AN = 0,

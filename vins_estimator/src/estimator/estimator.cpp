@@ -12,10 +12,32 @@
 #include "../factor/pose_subset_parameterization.h"
 #include "../factor/orientation_subset_parameterization.h"
 #include "../factor/Rwg_SO3_local_parameterization.h"
+#include "../factor/lidarFactor.hpp"
+#define DISTORTION 1
+
+constexpr double SCAN_PERIOD = 0.1;
+constexpr double DISTANCE_SQ_THRESHOLD = 25;
+constexpr double NEARBY_SCAN = 2.5;
+
+double para_q[4] = {0, 0, 0, 1};
+double para_t[3] = {0, 0, 0};
+Eigen::Map<Eigen::Quaterniond> q_last_curr(para_q);
+Eigen::Map<Eigen::Vector3d> t_last_curr(para_t);
+
 
 Estimator::Estimator(): f_manager{Rs}
 {
     ROS_INFO("init begins");
+
+    kdtreeCornerLast.reset(new pcl::KdTreeFLANN<pcl::PointXYZI>());
+    kdtreeSurfLast.reset(new pcl::KdTreeFLANN<pcl::PointXYZI>());
+    cornerPointsSharp.reset(new pcl::PointCloud<PointType>());
+    cornerPointsLessSharp.reset(new pcl::PointCloud<PointType>());
+    surfPointsFlat.reset(new pcl::PointCloud<PointType>());
+    surfPointsLessFlat.reset(new pcl::PointCloud<PointType>());
+    laserCloudCornerLast.reset(new pcl::PointCloud<PointType>());
+    laserCloudSurfLast.reset(new pcl::PointCloud<PointType>());
+    laserCloudFullRes.reset(new pcl::PointCloud<PointType>());
 
     //for rtabmap
     for(int i=0; i<WINDOW_SIZE+1; ++i)
@@ -122,6 +144,8 @@ void Estimator::clearState()
 
     tio = Vector3d::Zero();
     rio = Matrix3d::Identity();
+    til = Vector3d::Zero();;
+    ril = Matrix3d::Identity();
     sx = 0;
     sy = 0;
     sw = 0;
@@ -175,13 +199,16 @@ void Estimator::setParameter()
         cout << " exitrinsic cam " << i << endl  << ric[i] << endl << tic[i].transpose() << endl;
     }
     tio = TIO;
-    tio_0 = TIO;
+    tio_0 = -RIO * TIO;  // Here tio_0 is the toi indeed
     rio = RIO;
     cout << " exitrinsic wheel " << endl  << rio << endl << tio.transpose() << endl;
     sx = SX;
     sy = SY;
     sw = SW;
     cout << " initrinsic wheel " << endl  << sx << " " << sy << " " << sw << endl;
+    ril = RIL;
+    til = TIL;
+    cout << " exitrinsic lidar " << endl  << ril << endl << til.transpose() << endl;
 
     f_manager.setRic(ric);
     ProjectionTwoFrameOneCamFactor::sqrt_info = FOCAL_LENGTH / 1.5 * Matrix2d::Identity();
@@ -260,7 +287,7 @@ void Estimator::inputImage(double t, const cv::Mat &_img, const cv::Mat &_img1)
     
     if(MULTIPLE_THREAD)
     {     
-        if(inputImageCnt % 2 == 0)
+        if(inputImageCnt % 2 == 0) // 30 Hz to 15 Hz
         {
             mBuf.lock();
             featureBuf.push(make_pair(t, featureFrame));
@@ -321,6 +348,37 @@ void Estimator::inputFeature(double t, const vector<cv::Point2f>& _features0, co
 //            ofs << processTime.toc()<<std::endl;
 //        }
 
+        printf("process time: %f\n", processTime.toc());
+    }
+
+}
+void Estimator::inputPointCloud(double t, const pcl::PointCloud<pcl::PointXYZ> &laserCloudIn)
+{
+    FeatureExtractor featureExtractor;
+    featureExtractor.processPointCLoud(laserCloudIn);
+    if(MULTIPLE_THREAD)
+    {
+        mBuf.lock();
+        cornerSharpBuf.push(make_pair(t,featureExtractor.cornerPointsSharp));
+//        ROS_WARN_STREAM("cornerPointsSharp[0] t " << featureExtractor.cornerPointsSharp.points[featureExtractor.cornerPointsSharp.points.size() - 1].intensity);
+//        ROS_WARN_STREAM("cornerPointsSharp[1] t " << featureExtractor.cornerPointsSharp.points[featureExtractor.cornerPointsSharp.points.size() - 2].intensity);
+        cornerLessSharpBuf.push(make_pair(t,featureExtractor.cornerPointsLessSharp));
+        surfFlatBuf.push(make_pair(t,featureExtractor.surfPointsFlat));
+        surfLessFlatBuf.push(make_pair(t,featureExtractor.surfPointsLessFlat));
+        fullPointsBuf.push(make_pair(t,featureExtractor.laserCloud));
+        mBuf.unlock();
+    }
+    else
+    {
+        mBuf.lock();
+        cornerSharpBuf.push(make_pair(t,featureExtractor.cornerPointsSharp));
+        cornerLessSharpBuf.push(make_pair(t,featureExtractor.cornerPointsLessSharp));
+        surfFlatBuf.push(make_pair(t,featureExtractor.surfPointsFlat));
+        surfLessFlatBuf.push(make_pair(t,featureExtractor.surfPointsLessFlat));
+        fullPointsBuf.push(make_pair(t,featureExtractor.laserCloud));
+        mBuf.unlock();
+        TicToc processTime;
+        processMeasurements();
         printf("process time: %f\n", processTime.toc());
     }
 
@@ -466,6 +524,13 @@ bool Estimator::WheelAvailable(double t)
     else
         return false;
 }
+bool Estimator::LidarAvailable(double t)
+{
+    if(!cornerSharpBuf.empty() && t >= cornerSharpBuf.front().first)
+        return true;
+    else
+        return false;
+}
 void Estimator::processMeasurements()
 {
     while (1)
@@ -475,10 +540,17 @@ void Estimator::processMeasurements()
         pair<double, map<int, vector<pair<int, Eigen::Matrix<double, 7, 1> > > > > feature;
         vector<pair<double, Eigen::Vector3d>> accVector, gyrVector;
         vector<pair<double, Eigen::Vector3d>> velWheelVector, gyrWheelVector;
+        bool isLidar = false;
         if(!featureBuf.empty())
         {
             feature = featureBuf.front();
             curTime = feature.first + td;
+//            ROS_WARN_STREAM("curTime " << curTime);
+//            if(!cornerLessSharpBuf.empty()){
+//                double lidarTime = cornerLessSharpBuf.front().first;
+//                ROS_WARN_STREAM("lidarTime " << lidarTime);
+//                cornerLessSharpBuf.pop();
+//            }
             curTime_wheel = curTime - td_wheel;
             while(1)
             {
@@ -505,6 +577,24 @@ void Estimator::processMeasurements()
                     std::chrono::milliseconds dura(5);
                     std::this_thread::sleep_for(dura);
                 }
+            }
+            if (USE_LIDAR && LidarAvailable(feature.first)){
+                isLidar = true;
+                cornerPointsSharpFeature = cornerSharpBuf.front();
+                cornerSharpBuf.pop();
+                cornerPointsLessSharpFeature = cornerLessSharpBuf.front();
+                cornerLessSharpBuf.pop();
+                surfPointsFlatFeature = surfFlatBuf.front();
+                surfFlatBuf.pop();
+                surfPointsLessFlatFeature = surfLessFlatBuf.front();
+                surfLessFlatBuf.pop();
+                s_1 = (feature.first - cornerPointsSharpFeature.first) / SCAN_PERIOD;
+                *cornerPointsSharp = cornerPointsSharpFeature.second;
+                *cornerPointsLessSharp = cornerPointsLessSharpFeature.second;
+                *surfPointsFlat = surfPointsFlatFeature.second;
+                *surfPointsLessFlat = surfPointsLessFlatFeature.second;
+                LaserOdometryProcess();
+//                testFunction();
             }
             mBuf.lock();
             if(USE_IMU)
@@ -702,14 +792,11 @@ void Estimator::processMeasurements()
                 }
             }
 #endif
-            if (!static_init_flag && static_flag){
-                static_init_flag = static_initialize();
-            }
-            if (!static_init_flag && solver_flag == INITIAL && static_flag) {
-                continue;
-            }else{
+
+//            static_init_flag = static_initialize();
+            if (static_init_flag) {
                 mProcess.lock();
-                processImage(feature.second, feature.first);
+                processImage(feature.second, feature.first, isLidar);
                 prevTime = curTime;
                 prevTime_wheel = curTime_wheel;
 
@@ -724,6 +811,7 @@ void Estimator::processMeasurements()
                 pubGroundTruth(*this, header, pose, td);
                 pubKeyPoses(*this, header);
                 pubCameraPose(*this, header);
+//                pubLidarPointCloud(*this,header);
                 pubPointCloud(*this, header);
                 pubKeyframe(*this);
                 pubTF(*this, header);
@@ -737,6 +825,8 @@ void Estimator::processMeasurements()
 //                }
 
                 mProcess.unlock();
+            }else {
+                static_init_flag = static_initialize();
             }
         }
 
@@ -847,16 +937,15 @@ void Estimator::processIMU(double t, double dt, const Vector3d &linear_accelerat
         vel_0 = wheel_velocity;
         oldest_time = t;
     }
-    if (!static_init_flag && static_flag) {
+//    if (!static_init_flag && static_flag) {
         newest_time = t;
         imu_count++;
         ImuData imudata;
         imudata.timestamp = t;
         imudata.am = linear_acceleration;
-//        ROS_WARN_STREAM("angular_velocity " << angular_velocity);
         imudata.wm = angular_velocity;
         imu_data_list.push_back(imudata);
-    }
+//    }
 
     if (!pre_integrations[frame_count])
     {
@@ -965,7 +1054,7 @@ void Estimator::integrateWheelPreintegration( double t, Eigen::Vector3d& P, Eige
     P = Pwo;
     Q = Qwo;
 }
-void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const double header)
+void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const double header, const bool isLidar)
 {
     ROS_DEBUG("new image coming ------------------------------------------");
     ROS_DEBUG("Adding feature points %lu", image.size());
@@ -1121,6 +1210,10 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
             Rs[frame_count] = Rs[prev_frame];
             Bas[frame_count] = Bas[prev_frame];
             Bgs[frame_count] = Bgs[prev_frame];
+            if (isLidar) {
+                EdgePointsFrameVec[frame_count] = EdgePointsSum;
+                PlanePointsFrameVec[frame_count] = PlanePointsSum;
+            }
         }
 
         //设定平面参数的初始值
@@ -1196,128 +1289,6 @@ void Estimator::initPlane(){
     rpw = Utility::ypr2R(Eigen::Vector3d{-yaw, 0, 0}) * rpw;
     zpw = zpws / frame_count;
     std::cout<<"Init plane:  rpw: "<<Eigen::AngleAxisd(rpw).axis().transpose()<<" zpw: "<<zpw<<std::endl;
-}
-
-bool Estimator::checkObservibility()
-{
-     //TODO(tzhang):该作用域段主要用于检测IMU运动是否充分，但是目前代码中，运动不充分时并未进行额外处理，此处可改进；或者直接删除该段
-        map<double, ImageFrame>::iterator frame_it;
-        Vector3d sum_g;
-        Vector3d sum_w_q;
-        Vector3d sum_w_p;
-        vector<double> tmp_p_vec,tmp_q_vec;
-        for (frame_it = all_image_frame.begin(), frame_it++; frame_it != all_image_frame.end(); frame_it++)
-        {
-            double dt = frame_it->second.pre_integration->sum_dt;
-            Vector3d tmp_g = frame_it->second.pre_integration->delta_v / dt;
-            double w_dt=frame_it->second.pre_integration_wheel->sum_dt;
-            Vector3d tmp_q= 2 * frame_it->second.pre_integration_wheel->delta_q.vec() / w_dt;
-            tmp_q_vec.push_back(tmp_q.norm());
-            Vector3d tmp_p = frame_it->second.pre_integration_wheel->delta_p / w_dt;
-            tmp_p_vec.push_back(tmp_p.norm());
-            sum_g += tmp_g;
-            sum_w_q += tmp_q;
-            sum_w_p += tmp_p;
-        }
-        Vector3d aver_g;
-        double aver_p=0,aver_q=0;
-        aver_g = sum_g * 1.0 / ((int)all_image_frame.size() - 1);
-        aver_p = sum_w_p.norm() * 1.0 / ((int)all_image_frame.size() - 1) / sx ;
-//        cout << "average p " << aver_p << endl;
-        aver_q = sum_w_q.norm() * 1.0 / ((int)all_image_frame.size() - 1) / sw;
-//        cout << "average q " << aver_q << endl;
-        double var = 0;
-//        double var_p=0;
-//        double var_q =0;
-        for (frame_it = all_image_frame.begin(), frame_it++; frame_it != all_image_frame.end(); frame_it++)
-        {
-            double dt = frame_it->second.pre_integration->sum_dt;
-            Vector3d tmp_g = frame_it->second.pre_integration->delta_v / dt;
-            var += (tmp_g - aver_g).transpose() * (tmp_g - aver_g);
-//            double w_dt=frame_it->second.pre_integration_wheel->sum_dt;
-//            Vector3d tmp_q= 2 * frame_it->second.pre_integration_wheel->delta_q.vec() / w_dt;
-//            var_q += (tmp_q - aver_q).transpose() * (tmp_q - aver_q);
-//            Vector3d tmp_p = frame_it->second.pre_integration_wheel->delta_p / w_dt;
-//            var_p += (tmp_p - aver_p).transpose() * (tmp_p - aver_p);
-            //cout << "frame g " << tmp_g.transpose() << endl;
-        }
-        var = sqrt(var / ((int)all_image_frame.size() - 1));
-//        var_q = sqrt(var_q / ((int)all_image_frame.size() - 1));
-//        var_p = sqrt(var_p / ((int)all_image_frame.size() - 1));
-//        ROS_WARN_STREAM( "wheel linear velocity: " << aver_p << " "<< "wheel angular velocity: " << aver_q );
-        //ROS_WARN("IMU variation %f!", var);
-        if(var < 0.25)  // 0.25
-        {
-            ROS_INFO("IMU excitation not enough!");
-            return false;
-        }
-//        if( USE_WHEEL && (aver_p < 0.15 ) )
-//        {
-//            ROS_INFO("Wheel excitation not enough!");
-//            return false;
-//        }
-        return true;
-}
-
-bool Estimator::checkObservibility_wheel()
-{
-    //TODO(tzhang):该作用域段主要用于检测IMU运动是否充分，但是目前代码中，运动不充分时并未进行额外处理，此处可改进；或者直接删除该段
-    map<double, ImageFrame>::iterator frame_it;
-    Vector3d sum_g;
-    Vector3d sum_w_q;
-    Vector3d sum_w_p;
-    vector<double> tmp_p_vec,tmp_q_vec;
-    for (frame_it = all_image_frame.begin(), frame_it++; frame_it != all_image_frame.end(); frame_it++)
-    {
-        double dt = frame_it->second.pre_integration->sum_dt;
-        Vector3d tmp_g = frame_it->second.pre_integration->delta_v / dt;
-        double w_dt=frame_it->second.pre_integration_wheel->sum_dt;
-        Vector3d tmp_q= 2 * frame_it->second.pre_integration_wheel->delta_q.vec() / w_dt;
-        tmp_q_vec.push_back(tmp_q.norm());
-        Vector3d tmp_p = frame_it->second.pre_integration_wheel->delta_p / w_dt;
-        tmp_p_vec.push_back(tmp_p.norm());
-        sum_g += tmp_g;
-        sum_w_q += tmp_q;
-        sum_w_p += tmp_p;
-    }
-    Vector3d aver_g;
-    double aver_p=0,aver_q=0;
-    aver_g = sum_g * 1.0 / ((int)all_image_frame.size() - 1);
-    aver_p = sum_w_p.norm() * 1.0 / ((int)all_image_frame.size() - 1) / sx ;
-//        cout << "average p " << aver_p << endl;
-    aver_q = sum_w_q.norm() * 1.0 / ((int)all_image_frame.size() - 1) / sw;
-//        cout << "average q " << aver_q << endl;
-    double var = 0;
-//        double var_p=0;
-//        double var_q =0;
-    for (frame_it = all_image_frame.begin(), frame_it++; frame_it != all_image_frame.end(); frame_it++)
-    {
-        double dt = frame_it->second.pre_integration->sum_dt;
-        Vector3d tmp_g = frame_it->second.pre_integration->delta_v / dt;
-        var += (tmp_g - aver_g).transpose() * (tmp_g - aver_g);
-//            double w_dt=frame_it->second.pre_integration_wheel->sum_dt;
-//            Vector3d tmp_q= 2 * frame_it->second.pre_integration_wheel->delta_q.vec() / w_dt;
-//            var_q += (tmp_q - aver_q).transpose() * (tmp_q - aver_q);
-//            Vector3d tmp_p = frame_it->second.pre_integration_wheel->delta_p / w_dt;
-//            var_p += (tmp_p - aver_p).transpose() * (tmp_p - aver_p);
-        //cout << "frame g " << tmp_g.transpose() << endl;
-    }
-    var = sqrt(var / ((int)all_image_frame.size() - 1));
-//        var_q = sqrt(var_q / ((int)all_image_frame.size() - 1));
-//        var_p = sqrt(var_p / ((int)all_image_frame.size() - 1));
-//        ROS_WARN_STREAM( "wheel linear velocity: " << aver_p << " "<< "wheel angular velocity: " << aver_q );
-    //ROS_WARN("IMU variation %f!", var);
-//    if(var < 0.25)  // 0.25
-//    {
-//        ROS_INFO("IMU excitation not enough!");
-//        return false;
-//    }
-    if( USE_WHEEL && (aver_p < 0.15 ) )
-    {
-        ROS_INFO("Wheel excitation not enough!");
-        return false;
-    }
-    return true;
 }
 
 bool Estimator::checkLine()
@@ -1406,19 +1377,21 @@ bool Estimator::static_initialize()
     if (a_var_2to1 > init_imu_thresh) {
         ROS_WARN("[init-s]: to much IMU excitation, above threshold %.4f > %.4f\n", a_var_2to1, init_imu_thresh);
         static_flag = false;
-        return false;
+        return true;
     }
 
-    Vector3d estimate_g = a_avg_2to1 / a_avg_2to1.norm();
-    ROS_WARN_STREAM("estimate g " << estimate_g.transpose());
-    R0 = Utility::g2R(estimate_g);
-    ROS_WARN_STREAM("estimate R0 ypr " << Utility::R2ypr(R0).transpose());
-    ROS_WARN_STREAM("R0 * RIC     " << Utility::R2ypr(R0 * RIC[0]).transpose());
+    if (!static_init_flag) {
+        Vector3d estimate_g = a_avg_2to1 / a_avg_2to1.norm();
+        ROS_WARN_STREAM("estimate g " << estimate_g.transpose());
+        R0 = Utility::g2R(estimate_g);
+        ROS_WARN_STREAM("estimate R0 ypr " << Utility::R2ypr(R0).transpose());
+        ROS_WARN_STREAM("R0 * RIC     " << Utility::R2ypr(R0 * RIC[0]).transpose());
 
-    Bgs[0] = w_avg_2to1;
-    Bas[0] = a_avg_2to1 - R0.transpose() * G;
-    ROS_WARN_STREAM("estimate ba " << Bas[0].transpose());
-    ROS_WARN_STREAM("estimate bg " << Bgs[0].transpose());
+        Bgs[0] = w_avg_2to1;
+        Bas[0] = a_avg_2to1 - R0.transpose() * G;
+        ROS_WARN_STREAM("estimate ba " << Bas[0].transpose());
+        ROS_WARN_STREAM("estimate bg " << Bgs[0].transpose());
+    }
 
     return true;
 
@@ -1627,7 +1600,7 @@ bool Estimator::visualInitialAlign()
         }
     }
     ROS_WARN_STREAM("g0     " << g.transpose());  // g_c0
-    if (static_init_flag){
+    if (static_flag){
         R0 = R0 * RIC[0];
         g = R0 * g;  // g_w
     }else {
@@ -1744,14 +1717,14 @@ void Estimator::vector2double()
         }
     }
 
-    para_TIO[0][0] = tio_0.x();
-    para_TIO[0][1] = tio_0.y();
-    para_TIO[0][2] = tio_0.z();
+    para_Ex_NHC[0][0] = tio_0.x();
+    para_Ex_NHC[0][1] = tio_0.y();
+    para_Ex_NHC[0][2] = tio_0.z();
     Quaterniond q1{dR};
-    para_TIO[0][3] = q1.x();
-    para_TIO[0][4] = q1.y();
-    para_TIO[0][5] = q1.z();
-    para_TIO[0][6] = q1.w();
+    para_Ex_NHC[0][3] = q1.x();
+    para_Ex_NHC[0][4] = q1.y();
+    para_Ex_NHC[0][5] = q1.z();
+    para_Ex_NHC[0][6] = q1.w();
 
 
 
@@ -1786,6 +1759,15 @@ void Estimator::vector2double()
     para_plane_R[0][2] = q.z();
     para_plane_R[0][3] = q.w();
     para_plane_Z[0][0] = zpw;
+
+    para_Ex_Pose_lidar[0][0] = til.x();
+    para_Ex_Pose_lidar[0][1] = til.y();
+    para_Ex_Pose_lidar[0][2] = til.z();
+    Quaterniond q3{ril};
+    para_Ex_Pose_lidar[0][3] = q3.x();
+    para_Ex_Pose_lidar[0][4] = q3.y();
+    para_Ex_Pose_lidar[0][5] = q3.z();
+    para_Ex_Pose_lidar[0][6] = q3.w();
 
     VectorXd dep = f_manager.getDepthVector();
     for (int i = 0; i < f_manager.getFeatureCount(); i++)
@@ -1825,14 +1807,14 @@ void Estimator::double2vector()
                                            para_Pose[0][5]).toRotationMatrix().transpose();
         }
 
-        tio_0 = Vector3d(para_TIO[0][0],
-                       para_TIO[0][1],
-                       para_TIO[0][2]);
+        tio_0 = Vector3d(para_Ex_NHC[0][0],
+                         para_Ex_NHC[0][1],
+                         para_Ex_NHC[0][2]);   // In fact here tio_0 is the toi according to the residual formula
 
-        dR = Quaterniond(para_TIO[0][6],
-                         para_TIO[0][3],
-                         para_TIO[0][4],
-                         para_TIO[0][5]).toRotationMatrix().transpose();
+        dR = Quaterniond(para_Ex_NHC[0][6],
+                         para_Ex_NHC[0][3],
+                         para_Ex_NHC[0][4],
+                         para_Ex_NHC[0][5]).toRotationMatrix().transpose();
 
 //        ROS_WARN_STREAM("dR " << Utility::R2ypr(dR).transpose());
 
@@ -1863,24 +1845,24 @@ void Estimator::double2vector()
                                         para_SpeedBias[i][1],
                                         para_SpeedBias[i][2]);
 
-            if (i == 0) {
-//                vel_0 = pre_integrations[i + 1]->linearized_vel;
-                Vector3d w_x_0 = pre_integrations[i + 1]->linearized_gyr - pre_integrations[i + 1]->linearized_bg;
-                R_w_0 << 0, -w_x_0(2), w_x_0(1),
-                        w_x_0(2), 0, -w_x_0(0),
-                        -w_x_0(1), w_x_0(0), 0;
-//                ROS_WARN("Here is the test 1");
-            }else{
-//                vel_0 = pre_integrations[i]->vel_1;
-                Vector3d w_x_0 = pre_integrations[i]->gyr_1 - pre_integrations[i]->linearized_bg;
-//                ROS_WARN_STREAM("pre_integrations[i]->gyr_buf " << pre_integrations[i]->gyr_buf.size());
-//                ROS_WARN_STREAM("linearized_bg " << pre_integrations[i]->linearized_bg);
-//                ROS_WARN_STREAM("vel 0 " << vel_0.transpose());
-                R_w_0 << 0, -w_x_0(2), w_x_0(1),
-                        w_x_0(2), 0, -w_x_0(0),
-                        -w_x_0(1), w_x_0(0), 0;
-//                ROS_WARN("Here is the test %d", i);
-            }
+//            if (i == 0) {
+////                vel_0 = pre_integrations[i + 1]->linearized_vel;
+//                Vector3d w_x_0 = pre_integrations[i + 1]->linearized_gyr - pre_integrations[i + 1]->linearized_bg;
+//                R_w_0 << 0, -w_x_0(2), w_x_0(1),
+//                        w_x_0(2), 0, -w_x_0(0),
+//                        -w_x_0(1), w_x_0(0), 0;
+////                ROS_WARN("Here is the test 1");
+//            }else{
+////                vel_0 = pre_integrations[i]->vel_1;
+//                Vector3d w_x_0 = pre_integrations[i]->gyr_1 - pre_integrations[i]->linearized_bg;
+////                ROS_WARN_STREAM("pre_integrations[i]->gyr_buf " << pre_integrations[i]->gyr_buf.size());
+////                ROS_WARN_STREAM("linearized_bg " << pre_integrations[i]->linearized_bg);
+////                ROS_WARN_STREAM("vel 0 " << vel_0.transpose());
+//                R_w_0 << 0, -w_x_0(2), w_x_0(1),
+//                        w_x_0(2), 0, -w_x_0(0),
+//                        -w_x_0(1), w_x_0(0), 0;
+////                ROS_WARN("Here is the test %d", i);
+//            }
 
 
 //            Vs[i] = rot_diff * Rs[i] * (RIC[0] * R0.transpose() * dR * vel_0 - R_w_0 * tio_0);
@@ -1953,6 +1935,18 @@ void Estimator::double2vector()
     if(USE_PLANE){
         zpw = para_plane_Z[0][0];
         rpw = Quaterniond(para_plane_R[0][3], para_plane_R[0][0], para_plane_R[0][1], para_plane_R[0][2]).normalized().toRotationMatrix();
+    }
+
+    if(USE_LIDAR){
+        til = Vector3d(para_Ex_Pose_lidar[0][0],
+                       para_Ex_Pose_lidar[0][1],
+                       para_Ex_Pose_lidar[0][2]);
+        ril = Quaterniond(para_Ex_Pose_lidar[0][6],
+                          para_Ex_Pose_lidar[0][3],
+                          para_Ex_Pose_lidar[0][4],
+                          para_Ex_Pose_lidar[0][5]).normalized().toRotationMatrix();
+        ROS_WARN_STREAM("calib RIL     " << endl << ril);  // atan
+        ROS_WARN_STREAM("calib TIL     " << til.transpose());
     }
 
     VectorXd dep = f_manager.getDepthVector();
@@ -2040,7 +2034,7 @@ void Estimator::optimization()
 //    problem.AddParameterBlock(para_Gravity[0], SIZE_G, local_parameterization);
 ////    if (solver_flag == NON_LINEAR)
 //        problem.SetParameterBlockConstant(para_Gravity[0]);    // This is a stop button !!!
-//    problem.SetParameterBlockConstant(para_TIO[0]);
+//    problem.SetParameterBlockConstant(para_Ex_NHC[0]);
     //TODO 为什么有IMU就不需要固定第一帧位姿
     if(!USE_IMU)
         problem.SetParameterBlockConstant(para_Pose[0]);
@@ -2153,6 +2147,44 @@ void Estimator::optimization()
         }
     }
 
+    if(USE_LIDAR){
+//        ceres::LocalParameterization *local_parameterization = new PoseLocalParameterization();
+
+        ceres::LocalParameterization *local_parameterization;
+        if(ESTIMATE_EXTRINSIC_LIDAR) {
+            // 固定某些量
+            switch (LIDAR_EXT_ADJ_TYPE) {
+                case LidarExtrinsicAdjustType::ADJUST_LIDAR_NO_Z:
+                    local_parameterization = new PoseSubsetParameterization({2, 6});
+                    break;
+                case LidarExtrinsicAdjustType::ADJUST_LIDAR_ROTATION:
+                    local_parameterization = new PoseSubsetParameterization({0, 1, 2, 6});
+                    break;
+                case LidarExtrinsicAdjustType::ADJUST_LIDAR_TRANSLATION:
+                    local_parameterization = new PoseSubsetParameterization({3, 4, 5, 6});
+                    break;
+                case LidarExtrinsicAdjustType::ADJUST_LIDAR_NO_ROTATION_NO_Z:
+                    local_parameterization = new PoseSubsetParameterization({2, 3, 4, 5, 6});
+                    break;
+                default:
+                    local_parameterization = new PoseSubsetParameterization({});
+            }
+        } else
+            local_parameterization = new PoseLocalParameterization();
+
+        problem.AddParameterBlock(para_Ex_Pose_lidar[0], SIZE_POSE, local_parameterization);
+        if ((ESTIMATE_EXTRINSIC_LIDAR && frame_count == WINDOW_SIZE && Vs[0].norm() > 0.2) || openExLidarEstimation)
+        {
+            //ROS_INFO("estimate extrinsic param");
+            openExLidarEstimation = 1;
+        }
+        else
+        {
+            //ROS_INFO("fix extinsic param");
+            problem.SetParameterBlockConstant(para_Ex_Pose_lidar[0]);
+        }
+    }
+
 
     problem.AddParameterBlock(para_Td[0], 1);
     problem.AddParameterBlock(para_Td_wheel[0], 1);
@@ -2175,14 +2207,14 @@ void Estimator::optimization()
             int j = i + 1;
             if (pre_integrations[j]->sum_dt > 10.0) //两图像帧之间时间过长，不使用中间的预积分
                 continue;
-//            IMUFactor* imu_factor = new IMUFactor(pre_integrations[j]);
-//            problem.AddResidualBlock(imu_factor, NULL, para_Pose[i], para_SpeedBias[i], para_Pose[j], para_SpeedBias[j]);
+            IMUFactor* imu_factor = new IMUFactor(pre_integrations[j]);
+            problem.AddResidualBlock(imu_factor, NULL, para_Pose[i], para_SpeedBias[i], para_Pose[j], para_SpeedBias[j]);
 //            problem.AddResidualBlock(imu_factor, NULL, para_Pose[i], para_SpeedBias[i], para_Pose[j], para_SpeedBias[j], para_Gravity[0]);
 
 //            IMUWheelFactor* imu_factor = new IMUWheelFactor(pre_integrations[j]);
-            IMUWheelLineFactor* imu_factor = new IMUWheelLineFactor(pre_integrations[j]);
+//            IMUWheelLineFactor* imu_factor = new IMUWheelLineFactor(pre_integrations[j]);
 //            ROS_WARN_STREAM("gyr0 1 2 " << endl << pre_integrations[j]->gyr_buf[0].transpose());
-            problem.AddResidualBlock(imu_factor, NULL, para_Pose[i], para_SpeedBias[i], para_Pose[j], para_SpeedBias[j], para_TIO[0]);
+//            problem.AddResidualBlock(imu_factor, NULL, para_Pose[i], para_SpeedBias[i], para_Pose[j], para_SpeedBias[j], para_Ex_NHC[0]);
 
 //            std::vector<const double *> parameters(4);
 //            parameters[0] = para_Pose[i];
@@ -2206,9 +2238,9 @@ void Estimator::optimization()
                 local_parameterization = new PoseLocalParameterization();
             }
         }
-        problem.AddParameterBlock(para_TIO[0], SIZE_TIO, local_parameterization);
+        problem.AddParameterBlock(para_Ex_NHC[0], SIZE_NHC, local_parameterization);
         if(!ESTIMATE_TIO && !ESTIMATE_RIO){
-            problem.SetParameterBlockConstant(para_TIO[0]);
+            problem.SetParameterBlockConstant(para_Ex_NHC[0]);
         }
     }
     if(USE_WHEEL && !ONLY_INITIAL_WITH_WHEEL)
@@ -2234,6 +2266,20 @@ void Estimator::optimization()
         }
     }
 
+    if(USE_WHEEL && ONLY_INITIAL_WITH_WHEEL)
+    {
+        for (int i = 0; i < frame_count; i++)
+        {
+            int j = i + 1;
+            if (pre_integrations[j]->sum_dt > 10.0) //两图像帧之间时间过长，不使用中间的预积分
+                continue;
+            // TODO 添加卡方检验
+            NonholonomicFactor* nonholonomic_factor = new NonholonomicFactor(pre_integrations[j]);
+            problem.AddResidualBlock(nonholonomic_factor, NULL, para_Pose[i], para_SpeedBias[i], para_Pose[j], para_SpeedBias[j], para_Ex_NHC[0]);
+
+        }
+    }
+
     if(USE_PLANE)
     {
         for (int i = 0; i < frame_count; i++)
@@ -2241,6 +2287,40 @@ void Estimator::optimization()
             PlaneFactor* plane_factor = new PlaneFactor();
             problem.AddResidualBlock(plane_factor, NULL, para_Pose[i], para_Ex_Pose_wheel[0], para_plane_R[0], para_plane_Z[0]);
 
+//            std::vector<const double *> parameters(4);
+//            parameters[0] = para_Pose[i];
+//            parameters[1] = para_Ex_Pose_wheel[0];
+//            parameters[2] = para_plane_R[0];
+//            parameters[3] = para_plane_Z[0];
+//            plane_factor->check(const_cast<double **>(parameters.data()));
+        }
+    }
+
+    if(USE_LIDAR)
+    {
+        for (int i = 0; i < frame_count; i++)
+        {
+            if (!EdgePointsFrameVec[i].empty()) {
+                vector<EdgePoints> tmpEdgePoints = EdgePointsFrameVec[i];
+//                ROS_WARN_STREAM("lidar i " << i);
+                for (int j = 0; j < tmpEdgePoints.size(); ++j) {
+                    ceres::CostFunction *lidar_edge_factor = LidarEdgeFactor::Create(tmpEdgePoints[i].curr_point,
+                                                                                 tmpEdgePoints[i].last_point_a,
+                                                                                 tmpEdgePoints[i].last_point_b,
+                                                                                 tmpEdgePoints[i].s, s_1);
+                    problem.AddResidualBlock(lidar_edge_factor, loss_function, para_Pose[i], para_Pose[i+1], para_Ex_Pose_lidar[0]);
+                }
+                vector<PlanePoints> tmpPlanePoints = PlanePointsFrameVec[i];
+                for (int j = 0; j < tmpPlanePoints.size(); ++j) {
+                    ceres::CostFunction *lidar_plane_factor = LidarPlaneFactor::Create(tmpPlanePoints[i].curr_point,
+                                                                                  tmpPlanePoints[i].last_point_a,
+                                                                                  tmpPlanePoints[i].last_point_b,
+                                                                                  tmpPlanePoints[i].last_point_c,
+                                                                                  tmpPlanePoints[i].s, s_1);
+                    problem.AddResidualBlock(lidar_plane_factor, loss_function, para_Pose[i], para_Pose[i+1], para_Ex_Pose_lidar[0]);
+                }
+            }
+//
 //            std::vector<const double *> parameters(4);
 //            parameters[0] = para_Pose[i];
 //            parameters[1] = para_Ex_Pose_wheel[0];
@@ -2274,6 +2354,10 @@ void Estimator::optimization()
                 ProjectionTwoFrameOneCamFactor *f_td = new ProjectionTwoFrameOneCamFactor(pts_i, pts_j, it_per_id.feature_per_frame[0].velocity, it_per_frame.velocity,
                                                                  it_per_id.feature_per_frame[0].cur_td, it_per_frame.cur_td);
                 problem.AddResidualBlock(f_td, loss_function, para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index], para_Td[0]);
+                //TODO add lidar factor here (only add once)
+//                ROS_WARN_STREAM("imu_i " << imu_i);
+//                ROS_WARN_STREAM("imu_j " << imu_j);
+//                ROS_WARN_STREAM("feature_index " << feature_index);
 
 //                std::vector<const double *> parameters(6);
 //                parameters[0] = para_Pose[imu_i];
@@ -2362,18 +2446,18 @@ void Estimator::optimization()
         {
             if (pre_integrations[1]->sum_dt < 10.0)
             {
-//                IMUFactor* imu_factor = new IMUFactor(pre_integrations[1]);
+                IMUFactor* imu_factor = new IMUFactor(pre_integrations[1]);
 //                IMUWheelFactor* imu_factor = new IMUWheelFactor(pre_integrations[1]);
-                IMUWheelLineFactor* imu_factor = new IMUWheelLineFactor(pre_integrations[1]);
-                ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(imu_factor, NULL,
-                                                                           vector<double *>{para_Pose[0], para_SpeedBias[0], para_Pose[1], para_SpeedBias[1], para_TIO[0]},
-                                                                           vector<int>{0, 1});//边缘化 para_Pose[0], para_SpeedBias[0]
+//                IMUWheelLineFactor* imu_factor = new IMUWheelLineFactor(pre_integrations[1]);
+//                ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(imu_factor, NULL,
+//                                                                           vector<double *>{para_Pose[0], para_SpeedBias[0], para_Pose[1], para_SpeedBias[1], para_Ex_NHC[0]},
+//                                                                           vector<int>{0, 1});//边缘化 para_Pose[0], para_SpeedBias[0]
 //                ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(imu_factor, NULL,
 //                                                                               vector<double *>{para_Pose[0], para_SpeedBias[0], para_Pose[1], para_SpeedBias[1], para_Gravity[0]},
 //                                                                               vector<int>{0, 1});//边缘化 para_Pose[0], para_SpeedBias[0]
-//                ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(imu_factor, NULL,
-//                                                                           vector<double *>{para_Pose[0], para_SpeedBias[0], para_Pose[1], para_SpeedBias[1]},
-//                                                                           vector<int>{0, 1});//边缘化 para_Pose[0], para_SpeedBias[0]
+                ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(imu_factor, NULL,
+                                                                           vector<double *>{para_Pose[0], para_SpeedBias[0], para_Pose[1], para_SpeedBias[1]},
+                                                                           vector<int>{0, 1});//边缘化 para_Pose[0], para_SpeedBias[0]
                 marginalization_info->addResidualBlockInfo(residual_block_info);
             }
         }
@@ -2390,6 +2474,18 @@ void Estimator::optimization()
             }
         }
 
+        if(USE_WHEEL && ONLY_INITIAL_WITH_WHEEL)
+        {
+            if (pre_integrations[1]->sum_dt < 10.0)
+            {
+                NonholonomicFactor* nonholonomic_factor = new NonholonomicFactor(pre_integrations[1]);
+                ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(nonholonomic_factor, NULL,
+                                                                               vector<double *>{para_Pose[0], para_SpeedBias[0], para_Pose[1], para_SpeedBias[1], para_Ex_NHC[0]},
+                                                                               vector<int>{0, 1});//边缘化 para_Pose[0], para_SpeedBias[0]
+                marginalization_info->addResidualBlockInfo(residual_block_info);
+            }
+        }
+
         //平面部分，边缘化第0帧状态向量
         if(USE_PLANE)
         {
@@ -2398,6 +2494,35 @@ void Estimator::optimization()
                                                                            vector<double *>{para_Pose[0], para_Ex_Pose_wheel[0], para_plane_R[0], para_plane_Z[0]},
                                                                            vector<int>{0});//边缘化 para_Pose[0]
             marginalization_info->addResidualBlockInfo(residual_block_info);
+        }
+
+        if(USE_LIDAR)
+        {
+            if (!EdgePointsFrameVec[0].empty()) {
+                vector<EdgePoints> tmpEdgePoints = EdgePointsFrameVec[0];
+                for (int j = 0; j < tmpEdgePoints.size(); ++j) {
+                    ceres::CostFunction *lidar_edge_factor = LidarEdgeFactor::Create(tmpEdgePoints[0].curr_point,
+                                                                                 tmpEdgePoints[0].last_point_a,
+                                                                                 tmpEdgePoints[0].last_point_b,
+                                                                                 tmpEdgePoints[0].s, s_1);
+                    ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(lidar_edge_factor, NULL,
+                                                                                   vector<double *>{para_Pose[0], para_Pose[1], para_Ex_Pose_lidar[0]},
+                                                                                   vector<int>{0});//边缘化 para_Pose[0]
+                    marginalization_info->addResidualBlockInfo(residual_block_info);
+                }
+                vector<PlanePoints> tmpPlanePoints = PlanePointsFrameVec[0];
+                for (int j = 0; j < tmpPlanePoints.size(); ++j) {
+                    ceres::CostFunction *lidar_plane_factor = LidarPlaneFactor::Create(tmpPlanePoints[0].curr_point,
+                                                                                  tmpPlanePoints[0].last_point_a,
+                                                                                  tmpPlanePoints[0].last_point_b,
+                                                                                  tmpPlanePoints[0].last_point_c,
+                                                                                  tmpPlanePoints[0].s, s_1);
+                    ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(lidar_plane_factor, NULL,
+                                                                                   vector<double *>{para_Pose[0], para_Pose[1], para_Ex_Pose_lidar[0]},
+                                                                                   vector<int>{0});//边缘化 para_Pose[0]
+                    marginalization_info->addResidualBlockInfo(residual_block_info);
+                }
+            }
         }
 
         //图像部分，基于与第0帧相关的图像残差，边缘化第一次观测的图像帧为第0帧的路标点和第0帧
@@ -2485,7 +2610,9 @@ void Estimator::optimization()
         addr_shift[reinterpret_cast<long>(para_Td[0])] = para_Td[0];
         addr_shift[reinterpret_cast<long>(para_Td_wheel[0])] = para_Td_wheel[0];
 
-        addr_shift[reinterpret_cast<long>(para_TIO[0])] = para_TIO[0];
+        addr_shift[reinterpret_cast<long>(para_Ex_NHC[0])] = para_Ex_NHC[0];
+
+        addr_shift[reinterpret_cast<long>(para_Ex_Pose_lidar[0])] = para_Ex_Pose_lidar[0];
 
         vector<double *> parameter_blocks = marginalization_info->getParameterBlocks(addr_shift);
 
@@ -2561,7 +2688,9 @@ void Estimator::optimization()
             addr_shift[reinterpret_cast<long>(para_Td[0])] = para_Td[0];
             addr_shift[reinterpret_cast<long>(para_Td_wheel[0])] = para_Td_wheel[0];
 
-            addr_shift[reinterpret_cast<long>(para_TIO[0])] = para_TIO[0];
+            addr_shift[reinterpret_cast<long>(para_Ex_NHC[0])] = para_Ex_NHC[0];
+
+            addr_shift[reinterpret_cast<long>(para_Ex_Pose_lidar[0])] = para_Ex_Pose_lidar[0];
 
 
             vector<double *> parameter_blocks = marginalization_info->getParameterBlocks(addr_shift);
@@ -2734,7 +2863,7 @@ void Estimator::slideWindow()
                     Vector3d tmp_angular_velocity = angular_velocity_buf[frame_count][i];
                     Vector3d tmp_wheel_velocity = vel_velocity_buf[frame_count][i];
 
-                    ROS_WARN_STREAM("tmp_dt " << tmp_dt);
+//                    ROS_WARN_STREAM("tmp_dt " << tmp_dt);
                     pre_integrations[frame_count - 1]->push_back(tmp_dt, tmp_linear_acceleration, tmp_angular_velocity, tmp_wheel_velocity); //预积分的传播
 
                     dt_buf[frame_count - 1].push_back(tmp_dt); //TODO(tzhang): 数据保存有冗余，integration_base中也保存了同样的数据
@@ -3039,12 +3168,13 @@ void Estimator::updateLatestStates()
         tmpR_test = Utility::R2ypr(tmp_R).x();
         ROS_WARN_STREAM("rio  ypr   " << Utility::R2ypr(rio_0).transpose());
         ROS_WARN_STREAM("rio     " << endl << rio_0);
-        ROS_WARN_STREAM("tmpR ypr     " << endl << Utility::R2ypr(tmp_R.transpose()).transpose());
+        ROS_WARN_STREAM("tmpR ypr     " << endl << Utility::R2ypr_m(tmp_R).transpose());
 
         x_test = tio_0.x();
         y_test = tio_0.y();
         z_test = tio_0.z();
-        ROS_WARN_STREAM("tio     " << tio_0.transpose());
+        ROS_WARN_STREAM("toi     " << tio_0.transpose());
+        ROS_WARN_STREAM("tio    " << (-rio_0.transpose() * tio_0).transpose());
 
     mPropagate.unlock();
 
@@ -3367,4 +3497,275 @@ void Estimator::updateLatestStates()
         tmp_wheel_gyrBuf.pop();
     }
     mWheelPropagate.unlock();
+}
+
+// undistort lidar point
+void Estimator::TransformToStart(PointType const *const pi, PointType *const po)
+{
+    //interpolation ratio
+    double s;
+    if (DISTORTION)
+        s = (pi->intensity - int(pi->intensity)) / SCAN_PERIOD;
+    else
+        s = 1.0;
+    //s = 1;
+    Eigen::Quaterniond q_point_last = Eigen::Quaterniond::Identity().slerp(s, q_last_curr);
+    Eigen::Vector3d t_point_last = s * t_last_curr;
+    Eigen::Vector3d point(pi->x, pi->y, pi->z);
+    Eigen::Vector3d un_point = q_point_last * point + t_point_last;
+
+    po->x = un_point.x();
+    po->y = un_point.y();
+    po->z = un_point.z();
+    po->intensity = pi->intensity;
+}
+
+// transform all lidar points to the start of the next frame
+
+void Estimator::TransformToEnd(PointType const *const pi, PointType *const po, double s)
+{
+
+    // undistort point first
+    pcl::PointXYZI un_point_tmp;
+    TransformToStart(pi, &un_point_tmp);
+
+    Eigen::Vector3d un_point{un_point_tmp.x, un_point_tmp.y, un_point_tmp.z};
+    Eigen::Vector3d point_end = q_last_curr.inverse() * (un_point - t_last_curr);
+
+    //transform points from the end of the current frame to the next closest image frame  by zhh
+    Eigen::Quaterniond q_next_image_point = Eigen::Quaterniond::Identity().slerp(s, q_last_curr); // constant velocity assumption
+    Eigen::Vector3d t_next_image_point = s * t_last_curr;
+
+    point_end = q_next_image_point.inverse() * (point_end - t_next_image_point);
+
+
+
+#if USE_IMU_FOR_DESKEW
+    Eigen::Vector3d imuShift{imuShiftFromStartX, imuShiftFromStartY, imuShiftFromStartZ};
+
+    Eigen::Quaterniond imuQstart = Eigen::AngleAxisd(imuYawStart, Eigen::Vector3d::UnitY()) * Eigen::AngleAxisd(imuPitchStart, Eigen::Vector3d::UnitX()) * Eigen::AngleAxisd(imuRollStart, Eigen::Vector3d::UnitZ());
+    Eigen::Quaterniond imuQlast = Eigen::AngleAxisd(-imuRollLast, Eigen::Vector3d::UnitZ()) * Eigen::AngleAxisd(-imuPitchLast, Eigen::Vector3d::UnitX()) * Eigen::AngleAxisd(-imuYawLast, Eigen::Vector3d::UnitY());
+
+//    Eigen::Quaterniond imuQstart = Eigen::AngleAxisd(imuRollStart, Eigen::Vector3d::UnitZ()) * Eigen::AngleAxisd(imuPitchStart, Eigen::Vector3d::UnitX()) * Eigen::AngleAxisd(imuYawStart, Eigen::Vector3d::UnitY());
+//    Eigen::Quaterniond imuQlast = Eigen::AngleAxisd(-imuYawLast, Eigen::Vector3d::UnitY()) * Eigen::AngleAxisd(-imuPitchLast, Eigen::Vector3d::UnitX()) * Eigen::AngleAxisd(-imuRollLast, Eigen::Vector3d::UnitZ());
+
+    point_end = imuQlast * imuQstart * (point_end - imuShift);
+#endif
+
+    po->x = point_end.x();
+    po->y = point_end.y();
+    po->z = point_end.z();
+
+    //Remove distortion time info
+    po->intensity = int(pi->intensity);
+}
+
+void Estimator::LaserOdometryProcess(){
+    int cornerPointsSharpNum = cornerPointsSharp->points.size();
+    int surfPointsFlatNum = surfPointsFlat->points.size();
+
+    pcl::PointXYZI pointSel;
+    std::vector<int> pointSearchInd;
+    std::vector<float> pointSearchSqDis;
+
+    // initializing
+    if (!systemInited)
+    {
+        systemInited = true;
+        std::cout << "Initialization finished \n";
+    }
+    else {
+        EdgePointsSum.clear();
+        PlanePointsSum.clear();
+        // find correspondence for corner features
+        for (int i = 0; i < cornerPointsSharpNum; ++i) {
+//            ROS_WARN_STREAM("i " << i);
+            TransformToStart(&(cornerPointsSharp->points[i]), &pointSel);
+            TransformToEnd(&pointSel, &pointSel, s_1);
+            kdtreeCornerLast->nearestKSearch(pointSel, 1, pointSearchInd, pointSearchSqDis);
+
+            int closestPointInd = -1, minPointInd2 = -1;
+            if (pointSearchSqDis[0] < DISTANCE_SQ_THRESHOLD) {
+                closestPointInd = pointSearchInd[0];
+                int closestPointScanID = int(laserCloudCornerLast->points[closestPointInd].intensity);
+
+                double minPointSqDis2 = DISTANCE_SQ_THRESHOLD;
+                // search in the direction of increasing scan line
+                for (int j = closestPointInd + 1; j < (int) laserCloudCornerLast->points.size(); ++j) {
+                    // if in the same scan line, continue
+                    if (int(laserCloudCornerLast->points[j].intensity) <= closestPointScanID)
+                        continue;
+
+                    // if not in nearby scans, end the loop
+                    if (int(laserCloudCornerLast->points[j].intensity) > (closestPointScanID + NEARBY_SCAN))
+                        break;
+
+                    double pointSqDis = (laserCloudCornerLast->points[j].x - pointSel.x) *
+                                        (laserCloudCornerLast->points[j].x - pointSel.x) +
+                                        (laserCloudCornerLast->points[j].y - pointSel.y) *
+                                        (laserCloudCornerLast->points[j].y - pointSel.y) +
+                                        (laserCloudCornerLast->points[j].z - pointSel.z) *
+                                        (laserCloudCornerLast->points[j].z - pointSel.z);
+
+                    if (pointSqDis < minPointSqDis2) {
+                        // find nearer point
+                        minPointSqDis2 = pointSqDis;
+                        minPointInd2 = j;
+                    }
+                }
+
+                // search in the direction of decreasing scan line
+                for (int j = closestPointInd - 1; j >= 0; --j) {
+                    // if in the same scan line, continue
+                    if (int(laserCloudCornerLast->points[j].intensity) >= closestPointScanID)
+                        continue;
+
+                    // if not in nearby scans, end the loop
+                    if (int(laserCloudCornerLast->points[j].intensity) < (closestPointScanID - NEARBY_SCAN))
+                        break;
+
+                    double pointSqDis = (laserCloudCornerLast->points[j].x - pointSel.x) *
+                                        (laserCloudCornerLast->points[j].x - pointSel.x) +
+                                        (laserCloudCornerLast->points[j].y - pointSel.y) *
+                                        (laserCloudCornerLast->points[j].y - pointSel.y) +
+                                        (laserCloudCornerLast->points[j].z - pointSel.z) *
+                                        (laserCloudCornerLast->points[j].z - pointSel.z);
+
+                    if (pointSqDis < minPointSqDis2) {
+                        // find nearer point
+                        minPointSqDis2 = pointSqDis;
+                        minPointInd2 = j;
+                    }
+                }
+            }
+            if (minPointInd2 >= 0) // both closestPointInd and minPointInd2 is valid
+            {
+                Eigen::Vector3d curr_point(cornerPointsSharp->points[i].x,
+                                           cornerPointsSharp->points[i].y,
+                                           cornerPointsSharp->points[i].z);
+                Eigen::Vector3d last_point_a(laserCloudCornerLast->points[closestPointInd].x,
+                                             laserCloudCornerLast->points[closestPointInd].y,
+                                             laserCloudCornerLast->points[closestPointInd].z);
+                Eigen::Vector3d last_point_b(laserCloudCornerLast->points[minPointInd2].x,
+                                             laserCloudCornerLast->points[minPointInd2].y,
+                                             laserCloudCornerLast->points[minPointInd2].z);
+                double s;
+                if (DISTORTION)
+                    s = (cornerPointsSharp->points[i].intensity - int(cornerPointsSharp->points[i].intensity)) /
+                        SCAN_PERIOD;
+                else
+                    s = 1.0;
+                EdgePoints edgePoints = {curr_point, last_point_a, last_point_b, s};
+                EdgePointsSum.push_back(edgePoints);
+//                ceres::CostFunction *cost_function = LidarEdgeFactor::Create(curr_point, last_point_a, last_point_b, s);
+//                problem.AddResidualBlock(cost_function, loss_function, para_q, para_t);
+            }
+        }
+
+        // find correspondence for plane features
+        for (int i = 0; i < surfPointsFlatNum; ++i) {
+            TransformToStart(&(surfPointsFlat->points[i]), &pointSel);
+            kdtreeSurfLast->nearestKSearch(pointSel, 1, pointSearchInd, pointSearchSqDis);
+
+            int closestPointInd = -1, minPointInd2 = -1, minPointInd3 = -1;
+            if (pointSearchSqDis[0] < DISTANCE_SQ_THRESHOLD) {
+                closestPointInd = pointSearchInd[0];
+
+                // get closest point's scan ID
+                int closestPointScanID = int(laserCloudSurfLast->points[closestPointInd].intensity);
+                double minPointSqDis2 = DISTANCE_SQ_THRESHOLD, minPointSqDis3 = DISTANCE_SQ_THRESHOLD;
+
+                // search in the direction of increasing scan line
+                for (int j = closestPointInd + 1; j < (int) laserCloudSurfLast->points.size(); ++j) {
+                    // if not in nearby scans, end the loop
+                    if (int(laserCloudSurfLast->points[j].intensity) > (closestPointScanID + NEARBY_SCAN))
+                        break;
+
+                    double pointSqDis = (laserCloudSurfLast->points[j].x - pointSel.x) *
+                                        (laserCloudSurfLast->points[j].x - pointSel.x) +
+                                        (laserCloudSurfLast->points[j].y - pointSel.y) *
+                                        (laserCloudSurfLast->points[j].y - pointSel.y) +
+                                        (laserCloudSurfLast->points[j].z - pointSel.z) *
+                                        (laserCloudSurfLast->points[j].z - pointSel.z);
+
+                    // if in the same or lower scan line
+                    if (int(laserCloudSurfLast->points[j].intensity) <= closestPointScanID &&
+                        pointSqDis < minPointSqDis2) {
+                        minPointSqDis2 = pointSqDis;
+                        minPointInd2 = j;
+                    }
+                        // if in the higher scan line
+                    else if (int(laserCloudSurfLast->points[j].intensity) > closestPointScanID &&
+                             pointSqDis < minPointSqDis3) {
+                        minPointSqDis3 = pointSqDis;
+                        minPointInd3 = j;
+                    }
+                }
+
+                // search in the direction of decreasing scan line
+                for (int j = closestPointInd - 1; j >= 0; --j) {
+                    // if not in nearby scans, end the loop
+                    if (int(laserCloudSurfLast->points[j].intensity) < (closestPointScanID - NEARBY_SCAN))
+                        break;
+
+                    double pointSqDis = (laserCloudSurfLast->points[j].x - pointSel.x) *
+                                        (laserCloudSurfLast->points[j].x - pointSel.x) +
+                                        (laserCloudSurfLast->points[j].y - pointSel.y) *
+                                        (laserCloudSurfLast->points[j].y - pointSel.y) +
+                                        (laserCloudSurfLast->points[j].z - pointSel.z) *
+                                        (laserCloudSurfLast->points[j].z - pointSel.z);
+
+                    // if in the same or higher scan line
+                    if (int(laserCloudSurfLast->points[j].intensity) >= closestPointScanID &&
+                        pointSqDis < minPointSqDis2) {
+                        minPointSqDis2 = pointSqDis;
+                        minPointInd2 = j;
+                    } else if (int(laserCloudSurfLast->points[j].intensity) < closestPointScanID &&
+                               pointSqDis < minPointSqDis3) {
+                        // find nearer point
+                        minPointSqDis3 = pointSqDis;
+                        minPointInd3 = j;
+                    }
+                }
+
+                if (minPointInd2 >= 0 && minPointInd3 >= 0) {
+
+                    Eigen::Vector3d curr_point(surfPointsFlat->points[i].x,
+                                               surfPointsFlat->points[i].y,
+                                               surfPointsFlat->points[i].z);
+                    Eigen::Vector3d last_point_a(laserCloudSurfLast->points[closestPointInd].x,
+                                                 laserCloudSurfLast->points[closestPointInd].y,
+                                                 laserCloudSurfLast->points[closestPointInd].z);
+                    Eigen::Vector3d last_point_b(laserCloudSurfLast->points[minPointInd2].x,
+                                                 laserCloudSurfLast->points[minPointInd2].y,
+                                                 laserCloudSurfLast->points[minPointInd2].z);
+                    Eigen::Vector3d last_point_c(laserCloudSurfLast->points[minPointInd3].x,
+                                                 laserCloudSurfLast->points[minPointInd3].y,
+                                                 laserCloudSurfLast->points[minPointInd3].z);
+                    double s;
+                    if (DISTORTION)
+                        s = (surfPointsFlat->points[i].intensity - int(surfPointsFlat->points[i].intensity)) /
+                            SCAN_PERIOD;
+                    else
+                        s = 1.0;
+                    PlanePoints planePoints = {curr_point, last_point_a, last_point_b, last_point_c, s};
+                    PlanePointsSum.push_back(planePoints);
+//                    ceres::CostFunction *cost_function = LidarPlaneFactor::Create(curr_point, last_point_a, last_point_b, last_point_c, s);
+//                    problem.AddResidualBlock(cost_function, loss_function, para_q, para_t);
+                }
+            }
+        }
+    }
+
+    pcl::PointCloud<PointType>::Ptr laserCloudTemp = cornerPointsLessSharp;
+    cornerPointsLessSharp = laserCloudCornerLast;
+    laserCloudCornerLast = laserCloudTemp;
+
+    laserCloudTemp = surfPointsLessFlat;
+    surfPointsLessFlat = laserCloudSurfLast;
+    laserCloudSurfLast = laserCloudTemp;
+
+    kdtreeCornerLast->setInputCloud(laserCloudCornerLast);
+    kdtreeSurfLast->setInputCloud(laserCloudSurfLast);
+
 }

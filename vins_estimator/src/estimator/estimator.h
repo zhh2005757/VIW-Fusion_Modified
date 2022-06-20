@@ -31,10 +31,11 @@
 #include "../initial/initial_sfm.h"
 #include "../initial/initial_alignment.h"
 #include "../initial/initial_ex_rotation.h"
-//#include "../factor/imu_factor.h"
+#include "../factor/imu_factor.h"
 //#include "../factor/imu_wheel_factor.h"
 //#include "../factor/imu_wheel_line_factor.h"
-#include "../factor/imu_wheel_line_factor_2.h"
+//#include "../factor/imu_wheel_line_factor_2.h"
+#include "../factor/nonholonomic_factor.h"
 #include "../factor/plane_factor.h"
 #include "../factor/wheel_factor.h"
 #include "../factor/pose_local_parameterization.h"
@@ -44,7 +45,7 @@
 #include "../factor/projectionTwoFrameTwoCamFactor.h"
 #include "../factor/projectionOneFrameTwoCamFactor.h"
 #include "../featureTracker/feature_tracker.h"
-
+#include "../pointCloudFeatureManager/feature_extractor.h"
 
 class Estimator
 {
@@ -61,18 +62,17 @@ class Estimator
     void inputImage(double t, const cv::Mat &_img, const cv::Mat &_img1 = cv::Mat());
     void inputFeature(double t, const vector<cv::Point2f>& _features0, const vector<cv::Point2f>& _features1=vector<cv::Point2f>());//仿真的feature
     void inputGroundtruth(double t, Eigen::Matrix<double, 7, 1>& data);
+    void inputPointCloud(double t, const pcl::PointCloud<pcl::PointXYZ> &laserCloudIn);
     void processIMU(double t, double dt, const Vector3d &linear_acceleration, const Vector3d &angular_velocity);
     void processIMU(double t, double dt, const Vector3d &linear_acceleration, const Vector3d &angular_velocity, const Vector3d &wheel_velocity);
     void processWheel(double t, double dt, const Vector3d &linear_velocity, const Vector3d &angular_velocity);
     void integrateWheelPreintegration( double t, Eigen::Vector3d& P, Eigen::Quaterniond& Q, const Eigen::Matrix<double, 7, 1>& pose);
-    void processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const double header);
+    void processImage(const map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> &image, const double header, const bool isLidar);
     void processMeasurements();
     void changeSensorType(int use_imu, int use_stereo);
 
     // internal
     void clearState();
-    bool checkObservibility();
-    bool checkObservibility_wheel();
     bool checkLine();
     bool checkZeroV();
     bool static_initialize();
@@ -104,8 +104,13 @@ class Estimator
     void fastPredictPureWheel(double t, Eigen::Vector3d linear_velocity, Eigen::Vector3d angular_velocity, Eigen::Vector3d &P, Eigen::Quaterniond &Q, Eigen::Vector3d &V);
     bool IMUAvailable(double t);
     bool WheelAvailable(double t);
+    bool LidarAvailable(double t);
     void initFirstIMUPose(vector<pair<double, Eigen::Vector3d>> &accVector);
     void initPlane();
+
+    void LaserOdometryProcess();
+    void TransformToStart(PointType const *const pi, PointType *const po);
+    void TransformToEnd(PointType const *const pi, PointType *const po, double s);
 
     enum SolverFlag
     {
@@ -130,17 +135,24 @@ class Estimator
     queue<pair<double, Eigen::Vector3d>> gyrBuf;
     queue<pair<double, Eigen::Vector3d>> wheelGyrBuf;
     queue<pair<double, map<int, vector<pair<int, Eigen::Matrix<double, 7, 1> > > > > > featureBuf;
+    queue<pair<double, pcl::PointCloud<PointType>>> cornerSharpBuf;
+    queue<pair<double, pcl::PointCloud<PointType>>> cornerLessSharpBuf;
+    queue<pair<double, pcl::PointCloud<PointType>>> surfFlatBuf;
+    queue<pair<double, pcl::PointCloud<PointType>>> surfLessFlatBuf;
+    queue<pair<double, pcl::PointCloud<PointType>::Ptr>> fullPointsBuf;
     queue<pair<double, Eigen::Matrix<double,7,1>>> groundtruthBuf;
     double prevTime, curTime;
     double prevTime_wheel, curTime_wheel;
     bool openExEstimation;
     bool openExWheelEstimation;
     bool openIxEstimation;
+    bool openExLidarEstimation;
     bool openPlaneEstimation;
     std::thread trackThread;
     std::thread processThread;
 
     FeatureTracker featureTracker;
+//    FeatureExtractor featureExtractor;
 
     SolverFlag solver_flag;
     MarginalizationFlag  marginalization_flag;
@@ -152,6 +164,8 @@ class Estimator
     Matrix3d rio;
     Vector3d tio;
     Matrix3d rwg;
+    Matrix3d ril;
+    Vector3d til;
 
     //平面参数
     Matrix3d rpw;
@@ -211,10 +225,11 @@ class Estimator
     double para_SpeedBias[WINDOW_SIZE + 1][SIZE_SPEEDBIAS];
 //    double para_SpeedBias[WINDOW_SIZE + 1][SIZE_BIAS];
     double para_Gravity[1][SIZE_G];
-    double para_TIO[WINDOW_SIZE + 1][SIZE_TIO];
+    double para_Ex_NHC[WINDOW_SIZE + 1][SIZE_NHC];
     double para_Feature[NUM_OF_F][SIZE_FEATURE];
     double para_Ex_Pose[2][SIZE_POSE];
     double para_Ex_Pose_wheel[1][SIZE_POSE];
+    double para_Ex_Pose_lidar[1][SIZE_POSE];
     double para_plane_R[1][SIZE_ROTATION];
     double para_plane_Z[1][1];
     double para_Ix_sx_wheel[1][1];
@@ -300,9 +315,41 @@ class Estimator
     // LS
     list<pair<Matrix<double, 3, 6>, Vector3d>> LS_list;
 
-    Vector3d tio_0 = Vector3d::Zero();
+//    Vector3d tio_0 = Vector3d::Zero();
     Matrix3d rio_0 = Matrix3d::Identity();
-    Matrix3d dR = Matrix3d::Identity();
-//    Matrix3d dR = Utility::ypr2R(Vector3d{90,0,0});
+//    Matrix3d dR = Matrix3d::Identity();
     list<Vector3d> gyr_smooth_list;
+
+    pair<double, pcl::PointCloud<PointType>> cornerPointsSharpFeature;
+    pair<double, pcl::PointCloud<PointType>> cornerPointsLessSharpFeature;
+    pair<double, pcl::PointCloud<PointType>> surfPointsFlatFeature;
+    pair<double, pcl::PointCloud<PointType>> surfPointsLessFlatFeature;
+    double s_1;
+    pcl::KdTreeFLANN<pcl::PointXYZI>::Ptr kdtreeCornerLast;
+    pcl::KdTreeFLANN<pcl::PointXYZI>::Ptr kdtreeSurfLast;
+    pcl::PointCloud<PointType>::Ptr cornerPointsSharp;
+    pcl::PointCloud<PointType>::Ptr cornerPointsLessSharp;
+    pcl::PointCloud<PointType>::Ptr surfPointsFlat;
+    pcl::PointCloud<PointType>::Ptr surfPointsLessFlat;
+    pcl::PointCloud<PointType>::Ptr laserCloudCornerLast;
+    pcl::PointCloud<PointType>::Ptr laserCloudSurfLast;
+    pcl::PointCloud<PointType>::Ptr laserCloudFullRes;
+    struct EdgePoints{
+        Vector3d curr_point;
+        Vector3d last_point_a;
+        Vector3d last_point_b;
+        double s;
+    };
+    struct PlanePoints{
+        Vector3d curr_point;
+        Vector3d last_point_a;
+        Vector3d last_point_b;
+        Vector3d last_point_c;
+        double s;
+    };
+    vector<EdgePoints> EdgePointsSum;
+    vector<PlanePoints> PlanePointsSum;
+    vector<EdgePoints> EdgePointsFrameVec[WINDOW_SIZE + 1];
+    vector<PlanePoints> PlanePointsFrameVec[WINDOW_SIZE + 1];
+    bool systemInited = false;
 };

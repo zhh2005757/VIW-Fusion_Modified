@@ -28,6 +28,10 @@ std::vector<Eigen::Vector3d> TIC;
 
 Eigen::Matrix3d RIO;
 Eigen::Vector3d TIO;
+
+Eigen::Matrix3d RIL;
+Eigen::Vector3d TIL;
+
 Eigen::Matrix3d R0;
 Eigen::VectorXd x_ep;
 double ff;
@@ -36,6 +40,8 @@ Eigen::Vector3d G{0.0, 0.0, 9.8};
 Eigen::Vector3d g{0.0, 0.0, 9.8};
 Eigen::MatrixXd B {3,2};
 Eigen::Vector2d delta_g;
+Eigen::Matrix3d dR;
+Eigen::Vector3d tio_0;
 
 double BIAS_ACC_THRESHOLD;
 double BIAS_GYR_THRESHOLD;
@@ -44,6 +50,7 @@ int NUM_ITERATIONS;
 int ESTIMATE_EXTRINSIC;
 int ESTIMATE_EXTRINSIC_WHEEL;
 int ESTIMATE_INTRINSIC_WHEEL;
+int ESTIMATE_EXTRINSIC_LIDAR;
 int ESTIMATE_TD;
 int ESTIMATE_TD_WHEEL;
 int ROLLING_SHUTTER;
@@ -52,6 +59,7 @@ std::string IN_CALIB_RESULT_PATH;
 std::string VINS_RESULT_PATH;
 std::string INTRINSIC_ITERATE_PATH;
 std::string EXTRINSIC_WHEEL_ITERATE_PATH;
+std::string EXTRINSIC_LIDAR_ITERATE_PATH;
 std::string EXTRINSIC_CAM_ITERATE_PATH;
 std::string PROCESS_TIME_PATH;
 std::string TD_WHEEL_PATH;
@@ -60,6 +68,7 @@ std::string GROUNDTRUTH_PATH;
 std::string OUTPUT_FOLDER;
 std::string IMU_TOPIC;
 std::string WHEEL_TOPIC;
+std::string LIDAR_TOPIC;
 int ROW, COL;
 double TD;
 double OFFSET_SIM = 0.0;
@@ -69,6 +78,7 @@ int STEREO;
 int USE_IMU;
 int USE_WHEEL;
 int USE_PLANE;
+int USE_LIDAR;
 int ONLY_INITIAL_WITH_WHEEL;
 int ESTIMATE_TIO;
 int ESTIMATE_RIO;
@@ -87,6 +97,7 @@ int FLOW_BACK;
 
 CameraExtrinsicAdjustType CAM_EXT_ADJ_TYPE;
 WheelExtrinsicAdjustType WHEEL_EXT_ADJ_TYPE;
+LidarExtrinsicAdjustType LIDAR_EXT_ADJ_TYPE;
 
 template <typename T>
 T readParam(ros::NodeHandle &n, std::string name)
@@ -148,6 +159,9 @@ void readParameters(std::string config_file)
     USE_PLANE = fsSettings["plane"];
     printf("USE_PLANE: %d\n", USE_PLANE);
 
+    USE_LIDAR = fsSettings["lidar"];
+    printf("USE_LIDAR: %d\n", USE_LIDAR);
+
     if(USE_IMU)
     {
         fsSettings["imu_topic"] >> IMU_TOPIC;
@@ -190,7 +204,7 @@ void readParameters(std::string config_file)
                 EX_CALIB_RESULT_PATH = OUTPUT_FOLDER + "/extrinsic_parameter.csv";
             }
             if (ESTIMATE_EXTRINSIC_WHEEL == 0)
-                ROS_WARN(" fix extrinsic param ");
+                ROS_WARN(" fix wheel extrinsic param ");
 
             cv::Mat cv_T;
             fsSettings["body_T_wheel"] >> cv_T;
@@ -217,15 +231,15 @@ void readParameters(std::string config_file)
             switch(extrinsic_type){
                 case 0:
                     WHEEL_EXT_ADJ_TYPE = WheelExtrinsicAdjustType::ADJUST_WHEEL_ALL;
-                    ROS_INFO("adjust translation and rotation of cam extrinsic");
+                    ROS_INFO("adjust translation and rotation of wheel extrinsic");
                     break;
                 case 1:
                     WHEEL_EXT_ADJ_TYPE = WheelExtrinsicAdjustType::ADJUST_WHEEL_TRANSLATION;
-                    ROS_INFO("adjust only translation of cam extrinsic");
+                    ROS_INFO("adjust only translation of wheel extrinsic");
                     break;
                 case 2:
                     WHEEL_EXT_ADJ_TYPE = WheelExtrinsicAdjustType::ADJUST_WHEEL_ROTATION;
-                    ROS_INFO("adjust only rotation of cam extrinsic");
+                    ROS_INFO("adjust only rotation of wheel extrinsic");
                     break;
                 case 3:
                     WHEEL_EXT_ADJ_TYPE = WheelExtrinsicAdjustType::ADJUST_WHEEL_NO_Z;
@@ -258,7 +272,7 @@ void readParameters(std::string config_file)
                 fout.close();
             }
             if (ESTIMATE_INTRINSIC_WHEEL == 0)
-                ROS_WARN(" fix intrinsic param ");
+                ROS_WARN(" fix wheel intrinsic param ");
         }
 
     }
@@ -272,6 +286,76 @@ void readParameters(std::string config_file)
         ZPW_N_INV = 1.0 / ZPW_N;
         EX_CALIB_RESULT_PATH = OUTPUT_FOLDER + "/extrinsic_parameter.csv";
     }
+
+    if(USE_LIDAR)
+    {
+        fsSettings["lidar_topic"] >> LIDAR_TOPIC;
+        printf("LIDAR_TOPIC: %s\n", LIDAR_TOPIC.c_str());
+        ESTIMATE_EXTRINSIC_LIDAR = fsSettings["estimate_lidar_extrinsic"];
+        if(ESTIMATE_EXTRINSIC_LIDAR == 2){
+            ROS_WARN("have no prior about lidar extrinsic param, calibrate extrinsic param");
+            RIL = Eigen::Matrix3d::Identity();
+            TIL = Eigen::Vector3d::Zero();
+            EX_CALIB_RESULT_PATH = OUTPUT_FOLDER + "/extrinsic_parameter.csv";
+
+        }else {
+            if (ESTIMATE_EXTRINSIC_LIDAR == 1) {
+                ROS_WARN(" Optimize lidar extrinsic param around initial guess!");
+                EX_CALIB_RESULT_PATH = OUTPUT_FOLDER + "/extrinsic_parameter.csv";
+            }
+            if (ESTIMATE_EXTRINSIC_LIDAR == 0)
+                ROS_WARN(" fix lidar extrinsic param ");
+
+            cv::Mat cv_T;
+            fsSettings["body_T_lidar"] >> cv_T;
+            Eigen::Matrix4d T;
+            cv::cv2eigen(cv_T, T);
+            RIL = T.block<3, 3>(0, 0);
+            TIL = T.block<3, 1>(0, 3);
+            //归一化
+            Eigen::Quaterniond QIO(RIL);
+            RIL.normalize();
+            RIL = QIO.toRotationMatrix();
+            Eigen::Vector3d ypr = Utility::R2ypr(RIL);
+            cout << "y p r is :" << ypr.transpose() << endl;
+        }
+        if(ESTIMATE_EXTRINSIC_LIDAR){
+            EXTRINSIC_LIDAR_ITERATE_PATH = OUTPUT_FOLDER + "/extrinsic_iterate_lidar.csv";
+            std::ofstream fout(EXTRINSIC_LIDAR_ITERATE_PATH, std::ios::out);
+            fout.close();
+        }
+        if(ESTIMATE_EXTRINSIC_LIDAR)
+        {
+            int extrinsic_type = static_cast<int>(fsSettings["extrinsic_type_lidar"]);
+            switch(extrinsic_type){
+                case 0:
+                    LIDAR_EXT_ADJ_TYPE = LidarExtrinsicAdjustType::ADJUST_LIDAR_ALL;
+                    ROS_INFO("adjust translation and rotation of lidar extrinsic");
+                    break;
+                case 1:
+                    LIDAR_EXT_ADJ_TYPE = LidarExtrinsicAdjustType::ADJUST_LIDAR_TRANSLATION;
+                    ROS_INFO("adjust only translation of lidar extrinsic");
+                    break;
+                case 2:
+                    LIDAR_EXT_ADJ_TYPE = LidarExtrinsicAdjustType::ADJUST_LIDAR_ROTATION;
+                    ROS_INFO("adjust only rotation of lidar extrinsic");
+                    break;
+                case 3:
+                    LIDAR_EXT_ADJ_TYPE = LidarExtrinsicAdjustType::ADJUST_LIDAR_NO_Z;
+                    ROS_INFO("adjust without Z of translation of lidar extrinsic");
+                    break;
+                case 4:
+                    LIDAR_EXT_ADJ_TYPE = LidarExtrinsicAdjustType::ADJUST_LIDAR_NO_ROTATION_NO_Z;
+                    ROS_INFO("adjust without rotation and Z of translation of lidar extrinsic");
+                    break;
+                default:
+                    ROS_WARN("the extrinsic type range from 0 to 4");
+            }
+
+        }
+    }
+
+
 
 
     SOLVER_TIME = fsSettings["max_solver_time"];
@@ -446,4 +530,6 @@ void readParameters(std::string config_file)
     R0 = RIC[0];
     x_ep = Eigen::VectorXd::Zero(6);
     ff = 1.0;
+    dR = Eigen::Matrix3d::Identity();
+    tio_0 = Eigen::Vector3d::Zero();
 }

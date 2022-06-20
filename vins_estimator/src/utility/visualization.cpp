@@ -28,6 +28,12 @@ ros::Publisher pub_extrinsic;
 
 ros::Publisher pub_image_track;
 
+ros::Publisher pubLaserCloud;
+ros::Publisher pubCornerPointsSharp;
+ros::Publisher pubCornerPointsLessSharp;
+ros::Publisher pubSurfPointsFlat;
+ros::Publisher pubSurfPointsLessFlat;
+
 CameraPoseVisualization cameraposevisual(1, 0, 0, 1);
 static double sum_of_path = 0;
 static Vector3d last_path(0.0, 0.0, 0.0);
@@ -52,6 +58,16 @@ void registerPub(ros::NodeHandle &n)
     pub_keyframe_point = n.advertise<sensor_msgs::PointCloud>("keyframe_point", 1000);
     pub_extrinsic = n.advertise<nav_msgs::Odometry>("extrinsic", 1000);
     pub_image_track = n.advertise<sensor_msgs::Image>("image_track", 1000);
+
+    pubLaserCloud = n.advertise<sensor_msgs::PointCloud2>("velodyne_cloud_2", 100);
+
+    pubCornerPointsSharp = n.advertise<sensor_msgs::PointCloud2>("laser_cloud_sharp", 100);
+
+    pubCornerPointsLessSharp = n.advertise<sensor_msgs::PointCloud2>("laser_cloud_less_sharp", 100);
+
+    pubSurfPointsFlat = n.advertise<sensor_msgs::PointCloud2>("laser_cloud_flat", 100);
+
+    pubSurfPointsLessFlat = n.advertise<sensor_msgs::PointCloud2>("laser_cloud_less_flat", 100);
 
     cameraposevisual.setScale(0.1);
     cameraposevisual.setLineWidth(0.01);
@@ -636,6 +652,38 @@ void pubPointCloud(const Estimator &estimator, const std_msgs::Header &header)
     }
     pub_margin_cloud.publish(margin_cloud);
 }
+
+//void pubLidarPointCloud(const Estimator &estimator, const std_msgs::Header &header){
+//    sensor_msgs::PointCloud2 laserCloudOutMsg;
+//    pcl::toROSMsg(*estimator.featureExtractor.laserCloud, laserCloudOutMsg);
+//    laserCloudOutMsg.header.stamp = header.stamp;
+//    laserCloudOutMsg.header.frame_id = "world";
+//    pubLaserCloud.publish(laserCloudOutMsg);
+//
+//    sensor_msgs::PointCloud2 cornerPointsSharpMsg;
+//    pcl::toROSMsg(estimator.featureExtractor.cornerPointsSharp, cornerPointsSharpMsg);
+//    cornerPointsSharpMsg.header.stamp = header.stamp;
+//    cornerPointsSharpMsg.header.frame_id = "world";
+//    pubCornerPointsSharp.publish(cornerPointsSharpMsg);
+//
+//    sensor_msgs::PointCloud2 cornerPointsLessSharpMsg;
+//    pcl::toROSMsg(estimator.featureExtractor.cornerPointsLessSharp, cornerPointsLessSharpMsg);
+//    cornerPointsLessSharpMsg.header.stamp = header.stamp;
+//    cornerPointsLessSharpMsg.header.frame_id = "world";
+//    pubCornerPointsLessSharp.publish(cornerPointsLessSharpMsg);
+//
+//    sensor_msgs::PointCloud2 surfPointsFlat2;
+//    pcl::toROSMsg(estimator.featureExtractor.surfPointsFlat, surfPointsFlat2);
+//    surfPointsFlat2.header.stamp = header.stamp;
+//    surfPointsFlat2.header.frame_id = "world";
+//    pubSurfPointsFlat.publish(surfPointsFlat2);
+//
+//    sensor_msgs::PointCloud2 surfPointsLessFlat2;
+//    pcl::toROSMsg(estimator.featureExtractor.surfPointsLessFlat, surfPointsLessFlat2);
+//    surfPointsLessFlat2.header.stamp = header.stamp;
+//    surfPointsLessFlat2.header.frame_id = "world";
+//    pubSurfPointsLessFlat.publish(surfPointsLessFlat2);
+//}
 
 
 void pubTF(const Estimator &estimator, const std_msgs::Header &header)

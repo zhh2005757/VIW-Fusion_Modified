@@ -4,6 +4,7 @@
 #support: 1 imu 1 cam; 1 imu 2 cam: 2 cam; 
 imu: 1
 wheel: 1
+lidar: 0
 only_initial_with_wheel: 1 #只利用wheel进行初始化，不加入因子图
 estimate_tio: 1
 estimate_rio: 1
@@ -14,6 +15,7 @@ imu_topic: "/camera/imu"
 wheel_topic: "/chassis_feedback"
 image0_topic: "/camera/infra1/image_rect_raw"
 image1_topic: "/camera/infra2/image_rect_raw"
+lidar_topic: "/velodyne_points_ma"
 output_path: "/home/zhh2005757/viwo_ws/src/VIW-Fusion/output"
 
 cam0_calib: "left.yaml"
@@ -92,6 +94,33 @@ body_T_wheel: !!opencv-matrix
 #  0.0317452  -0.999418 -0.0124697     -51.1387 -87.0999   140.46 scout2
 #  -0.0393967  0.0112151  -0.999161
 #  0.998719  0.0322098 -0.0390178
+
+# Extrinsic parameter between IMU and Lidar.
+estimate_lidar_extrinsic: 0   # 0  Have an accurate extrinsic parameters. We will trust the following imu^R_cam, imu^T_cam, don't change it.
+# 1  Have an initial guess about extrinsic parameters. We will optimize around your initial guess.
+# 2  Don't know anything about extrinsic parameters. You don't need to give R,T. We will try to calibrate it. Do some rotation movement at beginning.
+# If you choose 0 or 1, you should write down the following matrix.
+
+extrinsic_type_lidar: 0
+  # 0 ALL
+  # 1 Only translation
+  # 2 Only Rotation
+  # 3 no z
+# 4 no rotation and no z
+
+#lidar to body
+body_T_lidar: !!opencv-matrix
+  rows: 4
+  cols: 4
+  dt: d
+#  data: [1, 0, 0, 0.0,
+#         0, 0, 1, 0.0,
+#         0, -1, 0, 0.0,
+#         0, 0, 0, 1]
+  data: [ 1, 0, 0, 0.0,
+          0, 1, 0, 0.0,
+          0, 0, 1, 0.0,
+          0, 0, 0, 1 ]
 
 #plane noise
 #mono:0.01 stereo:0.005

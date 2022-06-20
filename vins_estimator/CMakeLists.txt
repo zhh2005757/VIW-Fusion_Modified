@@ -36,6 +36,9 @@ include_directories(
   ${EIGEN3_INCLUDE_DIR}
 )
 
+find_package(PCL REQUIRED)
+include_directories(${PCL_INCLUDE_DIRS})
+
 
 catkin_package(
   INCLUDE_DIRS src
@@ -71,8 +74,8 @@ add_library(vins_lib
         src/initial/initial_aligment.cpp
         src/initial/initial_sfm.cpp
         src/initial/initial_ex_rotation.cpp
-        src/featureTracker/feature_tracker.cpp)
-target_link_libraries(vins_lib ${catkin_LIBRARIES} ${OpenCV_LIBS} ${CERES_LIBRARIES} ${Sophus_LIBRARIES})
+        src/featureTracker/feature_tracker.cpp src/pointCloudFeatureManager/feature_extractor.cpp src/pointCloudFeatureManager/feature_extractor.h)
+target_link_libraries(vins_lib ${catkin_LIBRARIES} ${OpenCV_LIBS} ${CERES_LIBRARIES} ${Sophus_LIBRARIES} ${PCL_LIBRARIES})
 
 
 add_executable(vins_node src/rosNodeTest.cpp)

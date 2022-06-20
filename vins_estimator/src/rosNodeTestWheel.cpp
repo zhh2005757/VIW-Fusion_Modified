@@ -27,7 +27,38 @@ queue<sensor_msgs::ImuConstPtr> imu_buf;
 queue<sensor_msgs::PointCloudConstPtr> feature_buf;
 queue<sensor_msgs::ImageConstPtr> img0_buf;
 queue<sensor_msgs::ImageConstPtr> img1_buf;
+queue<sensor_msgs::PointCloud2ConstPtr> lidarCloud_buf;
 std::mutex m_buf;
+double MINIMUM_RANGE = 0.1;
+
+template <typename PointT>
+void removeClosedPointCloud(const pcl::PointCloud<PointT> &cloud_in,
+                            pcl::PointCloud<PointT> &cloud_out, double thres)
+{
+    if (&cloud_in != &cloud_out)
+    {
+        cloud_out.header = cloud_in.header;
+        cloud_out.points.resize(cloud_in.points.size());
+    }
+
+    size_t j = 0;
+
+    for (size_t i = 0; i < cloud_in.points.size(); ++i)
+    {
+        if (cloud_in.points[i].x * cloud_in.points[i].x + cloud_in.points[i].y * cloud_in.points[i].y + cloud_in.points[i].z * cloud_in.points[i].z < thres * thres)
+            continue;
+        cloud_out.points[j] = cloud_in.points[i];
+        j++;
+    }
+    if (j != cloud_in.points.size())
+    {
+        cloud_out.points.resize(j);
+    }
+
+    cloud_out.height = 1;
+    cloud_out.width = static_cast<uint32_t>(j);
+    cloud_out.is_dense = true;
+}
 
 
 void img0_callback(const sensor_msgs::ImageConstPtr &img_msg)
@@ -43,6 +74,18 @@ void img1_callback(const sensor_msgs::ImageConstPtr &img_msg)
     img1_buf.push(img_msg);
     m_buf.unlock();
 }
+
+void lidar_callback(const sensor_msgs::PointCloud2ConstPtr &laserCloudMsg)
+{
+    double t = laserCloudMsg->header.stamp.toSec();
+    pcl::PointCloud<pcl::PointXYZ> laserCloudIn;
+    pcl::fromROSMsg(*laserCloudMsg, laserCloudIn);
+    std::vector<int> indices;
+    pcl::removeNaNFromPointCloud(laserCloudIn, laserCloudIn, indices);
+    removeClosedPointCloud(laserCloudIn, laserCloudIn, MINIMUM_RANGE);
+    estimator.inputPointCloud(t, laserCloudIn);
+}
+
 void wheel_callback(const nav_msgs::OdometryConstPtr &odom_msg)
 {
     double t = odom_msg->header.stamp.toSec();
@@ -269,6 +312,7 @@ int main(int argc, char **argv)
     ros::Subscriber sub_feature = n.subscribe("/feature_tracker/feature", 2000, feature_callback);
     ros::Subscriber sub_img0 = n.subscribe(IMAGE0_TOPIC, 100, img0_callback);
     ros::Subscriber sub_img1 = n.subscribe(IMAGE1_TOPIC, 100, img1_callback);
+    ros::Subscriber sub_lidar = n.subscribe(LIDAR_TOPIC, 100, lidar_callback);
     ros::Subscriber sub_restart = n.subscribe("/vins_restart", 100, restart_callback);
     ros::Subscriber sub_imu_switch = n.subscribe("/vins_imu_switch", 100, imu_switch_callback);
     ros::Subscriber sub_cam_switch = n.subscribe("/vins_cam_switch", 100, cam_switch_callback);

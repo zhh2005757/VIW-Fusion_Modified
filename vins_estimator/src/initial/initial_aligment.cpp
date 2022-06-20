@@ -1049,7 +1049,7 @@ bool LinearAlignment_NoVelocity(map<double, ImageFrame> &all_image_frame, Vector
 
 //original wheel 
 
-/*
+
 void RefineGravityWithWheel(map<double, ImageFrame> &all_image_frame, Vector3d &g, VectorXd &x)
 {
     Vector3d g0 = g.normalized() * G.norm();
@@ -1196,7 +1196,6 @@ bool LinearAlignmentWithWheel(map<double, ImageFrame> &all_image_frame, Vector3d
     ROS_WARN_STREAM(" refine     " << g.norm() << " " << g.transpose());
     return s >= 0.0;
 }
-*/
 
 // modified with respect to joint estimation （ Sx Sy Sw)
 
@@ -2066,7 +2065,7 @@ bool VisualIMUAlignment(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs,
 {
     solveGyroscopeBias(all_image_frame, Bgs);
 //    solveGyroscopeBias(all_image_frame, Bgs, wheel_s);
-//    if(USE_WHEEL) {
+    if(USE_WHEEL) {
 ////        solveGyroscopeBias(all_image_frame, Bgs, wheel_s);
 ////        for(int i=0;i<20;i++){
 ////            if(!LinearAlignmentWithWheel(all_image_frame, g, x,wheel_s))
@@ -2074,15 +2073,15 @@ bool VisualIMUAlignment(map<double, ImageFrame> &all_image_frame, Vector3d* Bgs,
 ////        }
 ////        return true;
 //        return LinearAlignment_NoVelocity(all_image_frame, g, x);
-////        return LinearAlignmentWithWheel(all_image_frame, g, x);
+        return LinearAlignmentWithWheel(all_image_frame, g, x);
 //        return LinearAlignmentWithWheel(all_image_frame, g, x,wheel_s);
 ////        return LinearAlignment_NoVelocity(all_image_frame, g, x);
 ////        return LinearAlignment_Sv(all_image_frame, g, x, wheel_s);
-//    }
-//    else{
+    }
+    else{
 //        return LinearAlignment_Joint(all_image_frame, g, x, Bas, Bgs);
         return LinearAlignment(all_image_frame, g, x);
 //        return LinearAlignment_Stereo(all_image_frame, g, x);
-//    }
+    }
 
 }

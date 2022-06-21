@@ -36,6 +36,8 @@ Eigen::Vector3d G{0.0, 0.0, 9.8};
 Eigen::Vector3d g{0.0, 0.0, 9.8};
 Eigen::MatrixXd B {3,2};
 Eigen::Vector2d delta_g;
+Eigen::Matrix3d dR;
+Eigen::Vector3d tio_0;
 
 double BIAS_ACC_THRESHOLD;
 double BIAS_GYR_THRESHOLD;
@@ -446,4 +448,6 @@ void readParameters(std::string config_file)
     R0 = RIC[0];
     x_ep = Eigen::VectorXd::Zero(6);
     ff = 1.0;
+    dR = Eigen::Matrix3d::Identity();
+    tio_0 = Eigen::Vector3d::Zero();
 }

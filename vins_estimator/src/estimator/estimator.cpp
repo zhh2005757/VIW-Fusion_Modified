@@ -1049,36 +1049,50 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         // stereo + IMU initilization
         if(STEREO && USE_IMU)
         {
-            f_manager.initFramePoseByPnP(frame_count, Ps, Rs, tic, ric);
-            f_manager.triangulate(frame_count, Ps, Rs, tic, ric);
-            if (frame_count == WINDOW_SIZE)
-            {
-                map<double, ImageFrame>::iterator frame_it;
-                int i = 0;
-                for (frame_it = all_image_frame.begin(); frame_it != all_image_frame.end(); frame_it++)
+//            if (!static_init_flag && static_flag){
+//                static_init_flag = static_initialize();
+//                f_manager.clearState();
+//                all_image_frame.clear();
+////                frame_count = 0;
+//            }else{
+//            if(checkZeroV() && ESTIMATE_EXTRINSIC != 2){
+                static_flag = false;
+                f_manager.initFramePoseByPnP(frame_count, Ps, Rs, tic, ric);
+                f_manager.triangulate(frame_count, Ps, Rs, tic, ric);
+                if (frame_count == WINDOW_SIZE)
                 {
-                    frame_it->second.R = Rs[i];
-                    frame_it->second.T = Ps[i];
-                    i++;
-                }
-                if (!static_flag){
-                    solveGyroscopeBias(all_image_frame, Bgs);
-                    for (int i = 0; i <= WINDOW_SIZE; i++)
+                    map<double, ImageFrame>::iterator frame_it;
+                    int i = 0;
+                    for (frame_it = all_image_frame.begin(); frame_it != all_image_frame.end(); frame_it++)
                     {
-                        pre_integrations[i]->repropagate(Vector3d::Zero(), Bgs[i]);
+                        frame_it->second.R = Rs[i];
+                        frame_it->second.T = Ps[i];
+                        i++;
                     }
-                }else{
-                    for (int i = 0; i <= WINDOW_SIZE; i++)
-                    {
-                        pre_integrations[i]->repropagate(Bas[0], Bgs[0]); // use the ba and bg from static initialization to propagete the preintegration
+                    if (!static_flag){
+                        solveGyroscopeBias(all_image_frame, Bgs);
+                        for (int i = 0; i <= WINDOW_SIZE; i++)
+                        {
+                            pre_integrations[i]->repropagate(Vector3d::Zero(), Bgs[i]);
+                        }
+                    }else{
+                        for (int i = 0; i <= WINDOW_SIZE; i++)
+                        {
+                            pre_integrations[i]->repropagate(Bas[0], Bgs[0]); // use the ba and bg from static initialization to propagete the preintegration
+                        }
                     }
+                    optimization();
+                    updateLatestStates();
+                    solver_flag = NON_LINEAR;
+                    slideWindow();
+                    ROS_INFO("Initialization finish!");
                 }
-                optimization();
-                updateLatestStates();
-                solver_flag = NON_LINEAR;
-                slideWindow();
-                ROS_INFO("Initialization finish!");
-            }
+//            }else{
+//                f_manager.clearState();
+//                all_image_frame.clear();
+//                frame_count = 0;
+//            }
+//            }
         }
 
         // stereo only initilization
@@ -1182,6 +1196,128 @@ void Estimator::initPlane(){
     rpw = Utility::ypr2R(Eigen::Vector3d{-yaw, 0, 0}) * rpw;
     zpw = zpws / frame_count;
     std::cout<<"Init plane:  rpw: "<<Eigen::AngleAxisd(rpw).axis().transpose()<<" zpw: "<<zpw<<std::endl;
+}
+
+bool Estimator::checkObservibility()
+{
+     //TODO(tzhang):该作用域段主要用于检测IMU运动是否充分，但是目前代码中，运动不充分时并未进行额外处理，此处可改进；或者直接删除该段
+        map<double, ImageFrame>::iterator frame_it;
+        Vector3d sum_g;
+        Vector3d sum_w_q;
+        Vector3d sum_w_p;
+        vector<double> tmp_p_vec,tmp_q_vec;
+        for (frame_it = all_image_frame.begin(), frame_it++; frame_it != all_image_frame.end(); frame_it++)
+        {
+            double dt = frame_it->second.pre_integration->sum_dt;
+            Vector3d tmp_g = frame_it->second.pre_integration->delta_v / dt;
+            double w_dt=frame_it->second.pre_integration_wheel->sum_dt;
+            Vector3d tmp_q= 2 * frame_it->second.pre_integration_wheel->delta_q.vec() / w_dt;
+            tmp_q_vec.push_back(tmp_q.norm());
+            Vector3d tmp_p = frame_it->second.pre_integration_wheel->delta_p / w_dt;
+            tmp_p_vec.push_back(tmp_p.norm());
+            sum_g += tmp_g;
+            sum_w_q += tmp_q;
+            sum_w_p += tmp_p;
+        }
+        Vector3d aver_g;
+        double aver_p=0,aver_q=0;
+        aver_g = sum_g * 1.0 / ((int)all_image_frame.size() - 1);
+        aver_p = sum_w_p.norm() * 1.0 / ((int)all_image_frame.size() - 1) / sx ;
+//        cout << "average p " << aver_p << endl;
+        aver_q = sum_w_q.norm() * 1.0 / ((int)all_image_frame.size() - 1) / sw;
+//        cout << "average q " << aver_q << endl;
+        double var = 0;
+//        double var_p=0;
+//        double var_q =0;
+        for (frame_it = all_image_frame.begin(), frame_it++; frame_it != all_image_frame.end(); frame_it++)
+        {
+            double dt = frame_it->second.pre_integration->sum_dt;
+            Vector3d tmp_g = frame_it->second.pre_integration->delta_v / dt;
+            var += (tmp_g - aver_g).transpose() * (tmp_g - aver_g);
+//            double w_dt=frame_it->second.pre_integration_wheel->sum_dt;
+//            Vector3d tmp_q= 2 * frame_it->second.pre_integration_wheel->delta_q.vec() / w_dt;
+//            var_q += (tmp_q - aver_q).transpose() * (tmp_q - aver_q);
+//            Vector3d tmp_p = frame_it->second.pre_integration_wheel->delta_p / w_dt;
+//            var_p += (tmp_p - aver_p).transpose() * (tmp_p - aver_p);
+            //cout << "frame g " << tmp_g.transpose() << endl;
+        }
+        var = sqrt(var / ((int)all_image_frame.size() - 1));
+//        var_q = sqrt(var_q / ((int)all_image_frame.size() - 1));
+//        var_p = sqrt(var_p / ((int)all_image_frame.size() - 1));
+//        ROS_WARN_STREAM( "wheel linear velocity: " << aver_p << " "<< "wheel angular velocity: " << aver_q );
+        //ROS_WARN("IMU variation %f!", var);
+        if(var < 0.25)  // 0.25
+        {
+            ROS_INFO("IMU excitation not enough!");
+            return false;
+        }
+//        if( USE_WHEEL && (aver_p < 0.15 ) )
+//        {
+//            ROS_INFO("Wheel excitation not enough!");
+//            return false;
+//        }
+        return true;
+}
+
+bool Estimator::checkObservibility_wheel()
+{
+    //TODO(tzhang):该作用域段主要用于检测IMU运动是否充分，但是目前代码中，运动不充分时并未进行额外处理，此处可改进；或者直接删除该段
+    map<double, ImageFrame>::iterator frame_it;
+    Vector3d sum_g;
+    Vector3d sum_w_q;
+    Vector3d sum_w_p;
+    vector<double> tmp_p_vec,tmp_q_vec;
+    for (frame_it = all_image_frame.begin(), frame_it++; frame_it != all_image_frame.end(); frame_it++)
+    {
+        double dt = frame_it->second.pre_integration->sum_dt;
+        Vector3d tmp_g = frame_it->second.pre_integration->delta_v / dt;
+        double w_dt=frame_it->second.pre_integration_wheel->sum_dt;
+        Vector3d tmp_q= 2 * frame_it->second.pre_integration_wheel->delta_q.vec() / w_dt;
+        tmp_q_vec.push_back(tmp_q.norm());
+        Vector3d tmp_p = frame_it->second.pre_integration_wheel->delta_p / w_dt;
+        tmp_p_vec.push_back(tmp_p.norm());
+        sum_g += tmp_g;
+        sum_w_q += tmp_q;
+        sum_w_p += tmp_p;
+    }
+    Vector3d aver_g;
+    double aver_p=0,aver_q=0;
+    aver_g = sum_g * 1.0 / ((int)all_image_frame.size() - 1);
+    aver_p = sum_w_p.norm() * 1.0 / ((int)all_image_frame.size() - 1) / sx ;
+//        cout << "average p " << aver_p << endl;
+    aver_q = sum_w_q.norm() * 1.0 / ((int)all_image_frame.size() - 1) / sw;
+//        cout << "average q " << aver_q << endl;
+    double var = 0;
+//        double var_p=0;
+//        double var_q =0;
+    for (frame_it = all_image_frame.begin(), frame_it++; frame_it != all_image_frame.end(); frame_it++)
+    {
+        double dt = frame_it->second.pre_integration->sum_dt;
+        Vector3d tmp_g = frame_it->second.pre_integration->delta_v / dt;
+        var += (tmp_g - aver_g).transpose() * (tmp_g - aver_g);
+//            double w_dt=frame_it->second.pre_integration_wheel->sum_dt;
+//            Vector3d tmp_q= 2 * frame_it->second.pre_integration_wheel->delta_q.vec() / w_dt;
+//            var_q += (tmp_q - aver_q).transpose() * (tmp_q - aver_q);
+//            Vector3d tmp_p = frame_it->second.pre_integration_wheel->delta_p / w_dt;
+//            var_p += (tmp_p - aver_p).transpose() * (tmp_p - aver_p);
+        //cout << "frame g " << tmp_g.transpose() << endl;
+    }
+    var = sqrt(var / ((int)all_image_frame.size() - 1));
+//        var_q = sqrt(var_q / ((int)all_image_frame.size() - 1));
+//        var_p = sqrt(var_p / ((int)all_image_frame.size() - 1));
+//        ROS_WARN_STREAM( "wheel linear velocity: " << aver_p << " "<< "wheel angular velocity: " << aver_q );
+    //ROS_WARN("IMU variation %f!", var);
+//    if(var < 0.25)  // 0.25
+//    {
+//        ROS_INFO("IMU excitation not enough!");
+//        return false;
+//    }
+    if( USE_WHEEL && (aver_p < 0.15 ) )
+    {
+        ROS_INFO("Wheel excitation not enough!");
+        return false;
+    }
+    return true;
 }
 
 bool Estimator::checkLine()
@@ -1517,6 +1653,14 @@ bool Estimator::visualInitialAlign()
     ROS_WARN_STREAM("R0  " << Utility::R2ypr(R0).transpose());
     dR = rio.transpose() * RIC[0] * R0.transpose();
     ROS_WARN_STREAM("dR " << Utility::R2ypr(dR).transpose());
+//    tio.setZero();
+//    tio = Vector3d{5.0,5.0,5.0};
+//    ROS_WARN_STREAM("my R0  " << Rs[0]);
+
+    // calib rio
+//    if (ONLY_INITIAL_WITH_WHEEL) {
+//        WheelExtrisincInitialize(all_image_frame, r_A, R0, rio, tio, x);
+//    }
 
     // end
 
@@ -2590,7 +2734,7 @@ void Estimator::slideWindow()
                     Vector3d tmp_angular_velocity = angular_velocity_buf[frame_count][i];
                     Vector3d tmp_wheel_velocity = vel_velocity_buf[frame_count][i];
 
-//                    ROS_WARN_STREAM("tmp_dt " << tmp_dt);
+                    ROS_WARN_STREAM("tmp_dt " << tmp_dt);
                     pre_integrations[frame_count - 1]->push_back(tmp_dt, tmp_linear_acceleration, tmp_angular_velocity, tmp_wheel_velocity); //预积分的传播
 
                     dt_buf[frame_count - 1].push_back(tmp_dt); //TODO(tzhang): 数据保存有冗余，integration_base中也保存了同样的数据

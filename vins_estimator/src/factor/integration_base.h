@@ -53,6 +53,9 @@ public:
 
     void push_back(double dt, const Eigen::Vector3d &acc, const Eigen::Vector3d &gyr)
     {
+//        if(gyr_buf.empty()){
+//            ROS_WARN_STREAM("gyr0 " << endl << gyr.transpose());
+//        }
         dt_buf.push_back(dt);
         acc_buf.push_back(acc);
         gyr_buf.push_back(gyr);
@@ -62,10 +65,17 @@ public:
     /* IMU */
     void push_back(double dt, const Eigen::Vector3d &acc, const Eigen::Vector3d &gyr, const Eigen::Vector3d &vel)
     {
+//        if(vel_buf.empty()){
+//            ROS_WARN_STREAM("vel_0 " << endl << vel.transpose());
+//        }
+        volatile double dt_0 = dt;
+//        ROS_WARN_STREAM("dt " << dt_0);
         dt_buf.push_back(dt);
         acc_buf.push_back(acc);
         gyr_buf.push_back(gyr);
+//        ROS_WARN_STREAM("gyr 0 " << endl << gyr);
         vel_buf.push_back(vel);
+//        ROS_WARN_STREAM("vel 0 " << endl << vel);
         propagate(dt, acc, gyr, vel);
     }
     /* IMU */
@@ -161,8 +171,8 @@ public:
             step_V = V;
             jacobian = F * jacobian;//这个是累计的雅可比，用于预积分的bias update，是因为状态量里包含bias，通过链式法则可以得到该雅可比递推式
             covariance.block<15, 15>(0, 0) = F * covariance.block<15, 15>(0, 0) * F.transpose() + V * noise * V.transpose();//协方差传递
-            Matrix3d A = dR * R0 * RIC[0].transpose() * Utility::skewSymmetric(tio_0);
-            covariance.block<3, 3>(15, 15) = 2 * (VEL_N_wheel * VEL_N_wheel) * Eigen::Matrix3d::Identity() + 2 * A * ((GYR_N * GYR_N) * Eigen::Matrix3d::Identity() + dt * (GYR_W * GYR_W) * Eigen::Matrix3d::Identity()) * A.transpose();
+            covariance.block<3, 3>(15, 15) = (VEL_N_wheel * VEL_N_wheel) * Eigen::Matrix3d::Identity() + (GYR_W * GYR_W) * Eigen::Matrix3d::Identity();
+//            covariance.block<3, 3>(15, 15) = (GYR_W * GYR_W) * Eigen::Matrix3d::Identity();
 //            cout << "covariance:\n" << covariance << endl;
         }
 
@@ -252,14 +262,14 @@ public:
 
         Matrix3d R_w_0;
 //        Vector3d w_x_0 = -R0 * RIC[0].transpose() * (gyr_buf[0] - linearized_bg);
-        Vector3d w_x_0 = linearized_gyr - Bgi;
+        Vector3d w_x_0 = linearized_gyr - linearized_bg;
         R_w_0 << 0, -w_x_0(2), w_x_0(1),
                 w_x_0(2), 0, -w_x_0(0),
                 -w_x_0(1), w_x_0(0), 0;
 
         Matrix3d R_w_1;
 //        Vector3d w_x_1 = -R0 * RIC[0].transpose() * (gyr_0 - linearized_bg);
-        Vector3d w_x_1 = gyr_1 - Bgj;
+        Vector3d w_x_1 = gyr_1 - linearized_bg;
         R_w_1 << 0, -w_x_1(2), w_x_1(1),
                 w_x_1(2), 0, -w_x_1(0),
                 -w_x_1(1), w_x_1(0), 0;

@@ -106,6 +106,8 @@ extern double F_THRESHOLD;
 extern int SHOW_TRACK;
 extern int FLOW_BACK;
 
+#define WHEEL 1
+
 void readParameters(std::string config_file);
 
 enum SIZE_PARAMETERIZATION

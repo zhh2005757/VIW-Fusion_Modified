@@ -86,7 +86,7 @@ class IMUWheelLineFactor : public ceres::SizedCostFunction<18, 7, 9, 7, 9, 7>
 
         Matrix3d R_w_0;
 //        Vector3d w_x_0 = -R0 * RIC[0].transpose() * (pre_integration->gyr_0 - pre_integration->linearized_bg);
-        Vector3d w_x_0 = pre_integration->linearized_gyr - Bgi;
+        Vector3d w_x_0 = pre_integration->linearized_gyr - pre_integration->linearized_bg;
 //        ROS_WARN_STREAM("w_x_0 " << w_x_0.transpose());
         R_w_0 << 0, -w_x_0(2), w_x_0(1),
                 w_x_0(2), 0, -w_x_0(0),
@@ -95,7 +95,7 @@ class IMUWheelLineFactor : public ceres::SizedCostFunction<18, 7, 9, 7, 9, 7>
 
         Matrix3d R_w_1;
 //        Vector3d w_x_1 = -R0 * RIC[0].transpose() * (pre_integration->gyr_1 - pre_integration->linearized_bg);
-        Vector3d w_x_1 = pre_integration->gyr_1 - Bgj;
+        Vector3d w_x_1 = pre_integration->gyr_1 - pre_integration->linearized_bg;
 //        ROS_WARN_STREAM("w_x_1 " << w_x_1.transpose());
         R_w_1 << 0, -w_x_1(2), w_x_1(1),
                 w_x_1(2), 0, -w_x_1(0),
@@ -177,7 +177,6 @@ class IMUWheelLineFactor : public ceres::SizedCostFunction<18, 7, 9, 7, 9, 7>
                 jacobian_speedbias_i.block<3, 3>(O_BG, O_BG - O_V) = -Eigen::Matrix3d::Identity();
 
                 jacobian_speedbias_i.block<3, 3>(O_VO, O_V - O_V) = dR.toRotationMatrix() * R0 * RIC[0].transpose() * Qi.inverse();
-                jacobian_speedbias_i.block<3, 3>(O_VO, O_BG - O_V) = -dR.toRotationMatrix() * R0 * RIC[0].transpose() * Utility::skewSymmetric(TIO);
 
                 jacobian_speedbias_i = sqrt_info * jacobian_speedbias_i;
 
@@ -217,7 +216,6 @@ class IMUWheelLineFactor : public ceres::SizedCostFunction<18, 7, 9, 7, 9, 7>
                 jacobian_speedbias_j.block<3, 3>(O_BG, O_BG - O_V) = Eigen::Matrix3d::Identity();
 
                 jacobian_speedbias_j.block<3, 3>(O_VO, O_V - O_V) = -dR.toRotationMatrix() * R0 * RIC[0].transpose() * Qj.inverse();
-                jacobian_speedbias_j.block<3, 3>(O_VO, O_BG - O_V) = dR.toRotationMatrix() * R0 * RIC[0].transpose() * Utility::skewSymmetric(TIO);
 
                 jacobian_speedbias_j = sqrt_info * jacobian_speedbias_j;
 

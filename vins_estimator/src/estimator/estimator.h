@@ -31,11 +31,12 @@
 #include "../initial/initial_sfm.h"
 #include "../initial/initial_alignment.h"
 #include "../initial/initial_ex_rotation.h"
-#include "../factor/imu_factor.h"
+//#include "../factor/imu_factor.h"
 //#include "../factor/imu_wheel_factor.h"
 //#include "../factor/imu_wheel_line_factor.h"
-//#include "../factor/imu_wheel_line_factor_2.h"
-#include "../factor/nonholonomic_factor.h"
+#include "../factor/imu_wheel_line_factor_2.h"
+//#include "../factor/nonholonomic_factor.h"
+#include "../factor/zupt_factor.h"
 #include "../factor/plane_factor.h"
 #include "../factor/wheel_factor.h"
 #include "../factor/pose_local_parameterization.h"
@@ -108,9 +109,10 @@ class Estimator
     void initFirstIMUPose(vector<pair<double, Eigen::Vector3d>> &accVector);
     void initPlane();
 
-    void LaserOdometryProcess();
+    void LaserOdometryProcess(double t0, double t1);
     void TransformToStart(PointType const *const pi, PointType *const po);
-    void TransformToEnd(PointType const *const pi, PointType *const po, double s);
+    void TransformToAnyTime(PointType const *const pi, PointType *const po, double s);
+    void TransformToEnd(PointType const *const pi, PointType *const po);
 
     enum SolverFlag
     {
@@ -143,6 +145,7 @@ class Estimator
     queue<pair<double, Eigen::Matrix<double,7,1>>> groundtruthBuf;
     double prevTime, curTime;
     double prevTime_wheel, curTime_wheel;
+    double prevTime_lidar, curTime_lidar;
     bool openExEstimation;
     bool openExWheelEstimation;
     bool openIxEstimation;
@@ -157,7 +160,7 @@ class Estimator
     SolverFlag solver_flag;
     MarginalizationFlag  marginalization_flag;
     bool bgSolver = false;
-//    Vector3d g;
+    Vector3d gb;
 
     Matrix3d ric[2]; //存储双目与imu之间的外参 ric[0] = R_i_cl; ric[1] = R_i_cr;
     Vector3d tic[2]; //tic[0] = t_i_cl; tic[1] = t_i_cr;
@@ -311,6 +314,7 @@ class Estimator
     bool static_init_flag;
     double init_window_time = 2.0;
     double init_imu_thresh = 0.3;
+    double zupt_thresh = 0.3;
 
     // LS
     list<pair<Matrix<double, 3, 6>, Vector3d>> LS_list;
@@ -352,4 +356,6 @@ class Estimator
     vector<EdgePoints> EdgePointsFrameVec[WINDOW_SIZE + 1];
     vector<PlanePoints> PlanePointsFrameVec[WINDOW_SIZE + 1];
     bool systemInited = false;
+    vector<pair<double, int>> camera_in_lidarFrame;
+    int camera_in_lidarFrame_num = 0;
 };

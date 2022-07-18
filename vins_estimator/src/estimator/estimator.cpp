@@ -21,7 +21,7 @@ constexpr double NEARBY_SCAN = 2.5;
 
 double para_q[4] = {0, 0, 0, 1};
 double para_t[3] = {0, 0, 0};
-Eigen::Map<Eigen::Quaterniond> q_last_curr(para_q);
+Eigen::Map<Eigen::Quaterniond> q_last_curr(para_q); //TODO Use IMU to deskew (interpolation)
 Eigen::Map<Eigen::Vector3d> t_last_curr(para_t);
 
 
@@ -94,8 +94,10 @@ void Estimator::clearState()
 
     prevTime = -1;
     prevTime_wheel = -1;
+    prevTime_lidar = -1;
     curTime = 0;
     curTime_wheel = 0;
+    curTime_lidar = -1;
     openExEstimation = 0;
     openPlaneEstimation = 0;
     openExWheelEstimation = 0;
@@ -199,8 +201,9 @@ void Estimator::setParameter()
         cout << " exitrinsic cam " << i << endl  << ric[i] << endl << tic[i].transpose() << endl;
     }
     tio = TIO;
-    tio_0 = -RIO * TIO;  // Here tio_0 is the toi indeed
+    tio_0 = TIO;
     rio = RIO;
+    rio_0 = RIO;
     cout << " exitrinsic wheel " << endl  << rio << endl << tio.transpose() << endl;
     sx = SX;
     sy = SY;
@@ -286,13 +289,19 @@ void Estimator::inputImage(double t, const cv::Mat &_img, const cv::Mat &_img1)
     }
     
     if(MULTIPLE_THREAD)
-    {     
+    {
+#if 1
         if(inputImageCnt % 2 == 0) // 30 Hz to 15 Hz
         {
             mBuf.lock();
             featureBuf.push(make_pair(t, featureFrame));
             mBuf.unlock();
         }
+#else
+        mBuf.lock();
+        featureBuf.push(make_pair(t, featureFrame));
+        mBuf.unlock();
+#endif
     }
     else
     {
@@ -360,8 +369,6 @@ void Estimator::inputPointCloud(double t, const pcl::PointCloud<pcl::PointXYZ> &
     {
         mBuf.lock();
         cornerSharpBuf.push(make_pair(t,featureExtractor.cornerPointsSharp));
-//        ROS_WARN_STREAM("cornerPointsSharp[0] t " << featureExtractor.cornerPointsSharp.points[featureExtractor.cornerPointsSharp.points.size() - 1].intensity);
-//        ROS_WARN_STREAM("cornerPointsSharp[1] t " << featureExtractor.cornerPointsSharp.points[featureExtractor.cornerPointsSharp.points.size() - 2].intensity);
         cornerLessSharpBuf.push(make_pair(t,featureExtractor.cornerPointsLessSharp));
         surfFlatBuf.push(make_pair(t,featureExtractor.surfPointsFlat));
         surfLessFlatBuf.push(make_pair(t,featureExtractor.surfPointsLessFlat));
@@ -588,14 +595,26 @@ void Estimator::processMeasurements()
                 surfFlatBuf.pop();
                 surfPointsLessFlatFeature = surfLessFlatBuf.front();
                 surfLessFlatBuf.pop();
-                s_1 = (feature.first - cornerPointsSharpFeature.first) / SCAN_PERIOD;
+                curTime_lidar = cornerPointsSharpFeature.first;
                 *cornerPointsSharp = cornerPointsSharpFeature.second;
                 *cornerPointsLessSharp = cornerPointsLessSharpFeature.second;
                 *surfPointsFlat = surfPointsFlatFeature.second;
                 *surfPointsLessFlat = surfPointsLessFlatFeature.second;
-                LaserOdometryProcess();
-//                testFunction();
+                //TODO add here
+                int idx = 0;
+                while(camera_in_lidarFrame_num > 1) {
+//                    s_1 = (feature.first - cornerPointsSharpFeature.first) / SCAN_PERIOD;
+                    double t0 = camera_in_lidarFrame[idx].first;
+                    double t1 = camera_in_lidarFrame[idx + 1].first;
+                    LaserOdometryProcess(t0, t1);
+                    idx ++;
+                    camera_in_lidarFrame_num--;
+                }
+                camera_in_lidarFrame.clear();
+                camera_in_lidarFrame_num = 0;
             }
+            camera_in_lidarFrame.emplace_back(curTime,camera_in_lidarFrame_num);
+            camera_in_lidarFrame_num++;
             mBuf.lock();
             if(USE_IMU)
                 //获取两图像帧时间戳之间的加速度和陀螺仪数据
@@ -608,7 +627,7 @@ void Estimator::processMeasurements()
                 getWheelInterval(prevTime_wheel, curTime_wheel, velWheelVector, gyrWheelVector);
             mWheelBuf.unlock();
 #if !WHEEL
-            if(USE_IMU && !USE_WHEEL)
+            if(USE_IMU)
             {
                 if(!initFirstPoseFlag)
                     initFirstIMUPose(accVector);
@@ -626,16 +645,28 @@ void Estimator::processMeasurements()
                     processIMU(accVector[i].first, dt, accVector[i].second, gyrVector[i].second);
                 }
             }
+            if(USE_WHEEL)
+            {
+                for(size_t i = 0; i < velWheelVector.size(); i++)
+                {
+                    //获取两帧wheel数据之间的dt
+                    double dt;
+                    if(i == 0)
+                        dt = velWheelVector[i].first - prevTime_wheel;
+                    else if (i == velWheelVector.size() - 1)
+                        dt = curTime_wheel - velWheelVector[i - 1].first;
+                    else
+                        dt = velWheelVector[i].first - velWheelVector[i - 1].first;
+                    //预积分
+                    processWheel(velWheelVector[i].first, dt, velWheelVector[i].second, gyrWheelVector[i].second);
+                }
+            }
 #else
             if(USE_IMU && USE_WHEEL)
             {
                 /* IMU */
                 size_t k=0;
-//                ROS_WARN_STREAM("curTime " << curTime);
                 /* IMU */
-
-//                ROS_WARN_STREAM("velWheelVector size " << velWheelVector.size());
-//                ROS_WARN_STREAM("accVector size " << accVector.size());
 
                 for(size_t i = 0; i < velWheelVector.size(); i++)
                 {
@@ -648,20 +679,6 @@ void Estimator::processMeasurements()
                         while(accVector[k].first < velWheelVector[i].first && k < accVector.size()){
 //                            ROS_WARN_STREAM("k-a is " << k);
                             Vector3d tmpGyrVec = gyrVector[k].second;
-
-//                            gyr_smooth_list.push_back(gyrVector[k].second);
-//                            Vector3d tmpGyrVec;
-//                            Vector3d gyr_sum = Vector3d::Zero();
-//                            if(gyr_smooth_list.size() < 10){
-//                                tmpGyrVec = gyrVector[k].second;
-//                            }else{
-//                                for (const Vector3d &gyr : gyr_smooth_list) {
-//                                    gyr_sum = gyr_sum + gyr;
-//                                }
-//                                tmpGyrVec = gyr_sum / gyr_smooth_list.size();
-//                                gyr_smooth_list.pop_front();
-//                            }
-
                             //获取两帧IMU数据之间的dt
                             double dt_0;
                             if(k == 0)
@@ -670,11 +687,8 @@ void Estimator::processMeasurements()
                                 dt_0 = curTime - accVector[k - 1].first;
                             else
                                 dt_0 = accVector[k].first - accVector[k - 1].first;
-//                            ROS_WARN_STREAM("dt_0  " << dt_0);
                             //预积分,并通过惯性解算得到Rs, Ps, Vs初值，用于后续processImage
-//                            ROS_WARN_STREAM("accVector[k].second.norm() " << accVector[k].second.norm());
                             processIMU(accVector[k].first, dt_0, accVector[k].second, tmpGyrVec, velWheelVector[i].second);
-//                                ROS_WARN_STREAM("gyrVector " << gyrVector[k].second);
                             k++;
                         }
                         /* IMU */
@@ -686,19 +700,6 @@ void Estimator::processMeasurements()
                         Vector3d inter_vel = (velWheelVector[i-1].second + velWheelVector[i].second) / 2.0;
                         while(accVector[k].first > velWheelVector[i-1].first && accVector[k].first < velWheelVector[i].first && k < accVector.size()){
                             Vector3d tmpGyrVec = gyrVector[k].second;
-//                            ROS_WARN_STREAM("k-b is " << k);
-//                            gyr_smooth_list.push_back(gyrVector[k].second);
-//                            Vector3d tmpGyrVec;
-//                            Vector3d gyr_sum = Vector3d::Zero();
-//                            if(gyr_smooth_list.size() < 10){
-//                                tmpGyrVec = gyrVector[k].second;
-//                            }else{
-//                                for (const Vector3d &gyr : gyr_smooth_list) {
-//                                    gyr_sum = gyr_sum + gyr;
-//                                }
-//                                tmpGyrVec = gyr_sum / gyr_smooth_list.size();
-//                                gyr_smooth_list.pop_front();
-//                            }
                             //获取两帧IMU数据之间的dt
                             double dt_0;
                             if(k == 0)
@@ -707,32 +708,15 @@ void Estimator::processMeasurements()
                                 dt_0 = curTime - accVector[k - 1].first;
                             else
                                 dt_0 = accVector[k].first - accVector[k - 1].first;
-//                            ROS_WARN_STREAM("dt_0  " << dt_0);
                             //预积分,并通过惯性解算得到Rs, Ps, Vs初值，用于后续processImage
-//                            ROS_WARN_STREAM("accVector[k].second.norm() " << accVector[k].second.norm());
                             processIMU(accVector[k].first, dt_0, accVector[k].second, tmpGyrVec, inter_vel);
-//                            ROS_WARN_STREAM("gyrVector " << gyrVector[k].second);
                             k++;
                         }
                         /* IMU */
 
                         /* IMU */
                         while(accVector[k].first > velWheelVector[i].first && k < accVector.size()){
-//                            ROS_WARN_STREAM("k-c is " << k);
                             Vector3d tmpGyrVec = gyrVector[k].second;
-//                            gyr_smooth_list.push_back(gyrVector[k].second);
-//                            Vector3d tmpGyrVec;
-//                            Vector3d gyr_sum = Vector3d::Zero();
-//                            if(gyr_smooth_list.size() < 10){
-//                                tmpGyrVec = gyrVector[k].second;
-//                            }else{
-//                                for (const Vector3d &gyr : gyr_smooth_list) {
-//                                    gyr_sum = gyr_sum + gyr;
-//                                }
-//                                tmpGyrVec = gyr_sum / gyr_smooth_list.size();
-//                                gyr_smooth_list.pop_front();
-//                            }
-
                             //获取两帧IMU数据之间的dt
                             double dt_0;
                             if(k == 0)
@@ -741,11 +725,8 @@ void Estimator::processMeasurements()
                                 dt_0 = curTime - accVector[k - 1].first;
                             else
                                 dt_0 = accVector[k].first - accVector[k - 1].first;
-//                            ROS_WARN_STREAM("dt_0  " << dt_0);
                             //预积分,并通过惯性解算得到Rs, Ps, Vs初值，用于后续processImage
-//                            ROS_WARN_STREAM("accVector[k].second.norm() " << accVector[k].second.norm());
                             processIMU(accVector[k].first, dt_0, accVector[k].second, tmpGyrVec, velWheelVector[i].second);
-//                                ROS_WARN_STREAM("gyrVector " << gyrVector[k].second);
                             k++;
                         }
                         /* IMU */
@@ -756,20 +737,7 @@ void Estimator::processMeasurements()
                         /* IMU */
                         Vector3d inter_vel = (velWheelVector[i-1].second + velWheelVector[i].second) / 2.0;
                         while(accVector[k].first > velWheelVector[i-1].first && accVector[k].first < velWheelVector[i].first && k < accVector.size()){
-//                            ROS_WARN_STREAM("k-b is " << k);
                             Vector3d tmpGyrVec = gyrVector[k].second;
-//                            gyr_smooth_list.push_back(gyrVector[k].second);
-//                            Vector3d tmpGyrVec;
-//                            Vector3d gyr_sum = Vector3d::Zero();
-//                            if(gyr_smooth_list.size() < 10){
-//                                tmpGyrVec = gyrVector[k].second;
-//                            }else{
-//                                for (const Vector3d &gyr : gyr_smooth_list) {
-//                                    gyr_sum = gyr_sum + gyr;
-//                                }
-//                                tmpGyrVec = gyr_sum / gyr_smooth_list.size();
-//                                gyr_smooth_list.pop_front();
-//                            }
                             //获取两帧IMU数据之间的dt
                             double dt_0;
                             if(k == 0)
@@ -778,11 +746,8 @@ void Estimator::processMeasurements()
                                 dt_0 = curTime - accVector[k - 1].first;
                             else
                                 dt_0 = accVector[k].first - accVector[k - 1].first;
-//                            ROS_WARN_STREAM("dt_0  " << dt_0);
                             //预积分,并通过惯性解算得到Rs, Ps, Vs初值，用于后续processImage
-//                            ROS_WARN_STREAM("accVector[k].second.norm() " << accVector[k].second.norm());
                             processIMU(accVector[k].first, dt_0, accVector[k].second, tmpGyrVec, inter_vel);
-//                            ROS_WARN_STREAM("gyrVector " << gyrVector[k].second);
                             k++;
                         }
                         /* IMU */
@@ -796,9 +761,12 @@ void Estimator::processMeasurements()
 //            static_init_flag = static_initialize();
             if (static_init_flag) {
                 mProcess.lock();
+//                static_initialize();
+//                static_flag = false;
                 processImage(feature.second, feature.first, isLidar);
                 prevTime = curTime;
                 prevTime_wheel = curTime_wheel;
+                prevTime_lidar = curTime_lidar;
 
                 printStatistics(*this, 0);
 
@@ -1124,6 +1092,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
                 }
                 if(result)
                 {
+                    static_flag = false;
                     optimization();
                     updateLatestStates();
                     solver_flag = NON_LINEAR;
@@ -1138,50 +1107,36 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         // stereo + IMU initilization
         if(STEREO && USE_IMU)
         {
-//            if (!static_init_flag && static_flag){
-//                static_init_flag = static_initialize();
-//                f_manager.clearState();
-//                all_image_frame.clear();
-////                frame_count = 0;
-//            }else{
-//            if(checkZeroV() && ESTIMATE_EXTRINSIC != 2){
-                static_flag = false;
-                f_manager.initFramePoseByPnP(frame_count, Ps, Rs, tic, ric);
-                f_manager.triangulate(frame_count, Ps, Rs, tic, ric);
-                if (frame_count == WINDOW_SIZE)
+            f_manager.initFramePoseByPnP(frame_count, Ps, Rs, tic, ric);
+            f_manager.triangulate(frame_count, Ps, Rs, tic, ric);
+            if (frame_count == WINDOW_SIZE)
+            {
+                map<double, ImageFrame>::iterator frame_it;
+                int i = 0;
+                for (frame_it = all_image_frame.begin(); frame_it != all_image_frame.end(); frame_it++)
                 {
-                    map<double, ImageFrame>::iterator frame_it;
-                    int i = 0;
-                    for (frame_it = all_image_frame.begin(); frame_it != all_image_frame.end(); frame_it++)
-                    {
-                        frame_it->second.R = Rs[i];
-                        frame_it->second.T = Ps[i];
-                        i++;
-                    }
-                    if (!static_flag){
-                        solveGyroscopeBias(all_image_frame, Bgs);
-                        for (int i = 0; i <= WINDOW_SIZE; i++)
-                        {
-                            pre_integrations[i]->repropagate(Vector3d::Zero(), Bgs[i]);
-                        }
-                    }else{
-                        for (int i = 0; i <= WINDOW_SIZE; i++)
-                        {
-                            pre_integrations[i]->repropagate(Bas[0], Bgs[0]); // use the ba and bg from static initialization to propagete the preintegration
-                        }
-                    }
-                    optimization();
-                    updateLatestStates();
-                    solver_flag = NON_LINEAR;
-                    slideWindow();
-                    ROS_INFO("Initialization finish!");
+                    frame_it->second.R = Rs[i];
+                    frame_it->second.T = Ps[i];
+                    i++;
                 }
-//            }else{
-//                f_manager.clearState();
-//                all_image_frame.clear();
-//                frame_count = 0;
-//            }
-//            }
+                if (!static_flag){
+                    solveGyroscopeBias(all_image_frame, Bgs);
+                    for (int i = 0; i <= WINDOW_SIZE; i++)
+                    {
+                        pre_integrations[i]->repropagate(Vector3d::Zero(), Bgs[i]);
+                    }
+                }else{
+                    for (int i = 0; i <= WINDOW_SIZE; i++)
+                    {
+                        pre_integrations[i]->repropagate(Bas[0], Bgs[0]); // use the ba and bg from static initialization to propagete the preintegration
+                    }
+                }
+                optimization();
+                updateLatestStates();
+                solver_flag = NON_LINEAR;
+                slideWindow();
+                ROS_INFO("Initialization finish!");
+            }
         }
 
         // stereo only initilization
@@ -1367,22 +1322,31 @@ bool Estimator::static_initialize()
     // ROS_WARN(BOLDGREEN "[init-s]: IMU excitation, %.4f,%.4f\n" RESET, a_var_1to0, a_var_2to1);
 
     // If it is below the threshold and we want to wait till we detect a jerk
-    if (a_var_1to0 < init_imu_thresh ) {
+    if (a_var_1to0 < init_imu_thresh && a_var_2to1 < init_imu_thresh) {
         ROS_WARN("[init-s]: no IMU excitation, below threshold %.4f < %.4f\n", a_var_1to0, init_imu_thresh);
         return false;
     }
 
     // We should also check that the old state was below the threshold!
     // This is the case when we have started up moving, and thus we need to wait for a period of stationary motion
-    if (a_var_2to1 > init_imu_thresh) {
+    if (a_var_2to1 > init_imu_thresh && a_var_1to0 > init_imu_thresh) {
         ROS_WARN("[init-s]: to much IMU excitation, above threshold %.4f > %.4f\n", a_var_2to1, init_imu_thresh);
         static_flag = false;
         return true;
     }
 
+    if (a_var_2to1 > zupt_thresh && a_var_1to0 < zupt_thresh) {
+        ROS_WARN("[init-s]: ZUPT Checked!");
+        static_flag = true;
+        return true;
+    }
+
     if (!static_init_flag) {
-        Vector3d estimate_g = a_avg_2to1 / a_avg_2to1.norm();
-        ROS_WARN_STREAM("estimate g " << estimate_g.transpose());
+        gb = a_avg_2to1;
+        G.z() = gb.norm();
+        Vector3d estimate_g = gb / gb.norm();
+        ROS_WARN_STREAM("estimate g " << gb.transpose());
+        ROS_WARN_STREAM("estimate g mag " << gb.norm());
         R0 = Utility::g2R(estimate_g);
         ROS_WARN_STREAM("estimate R0 ypr " << Utility::R2ypr(R0).transpose());
         ROS_WARN_STREAM("R0 * RIC     " << Utility::R2ypr(R0 * RIC[0]).transpose());
@@ -1391,7 +1355,11 @@ bool Estimator::static_initialize()
         Bas[0] = a_avg_2to1 - R0.transpose() * G;
         ROS_WARN_STREAM("estimate ba " << Bas[0].transpose());
         ROS_WARN_STREAM("estimate bg " << Bgs[0].transpose());
+        static_flag = true;
     }
+
+    if (solver_flag == NON_LINEAR)
+        static_flag = false;
 
     return true;
 
@@ -1601,8 +1569,9 @@ bool Estimator::visualInitialAlign()
     }
     ROS_WARN_STREAM("g0     " << g.transpose());  // g_c0
     if (static_flag){
+        g = R0 * gb;  // g_w
         R0 = R0 * RIC[0];
-        g = R0 * g;  // g_w
+        ROS_WARN_STREAM("g = R0 * gb " << g.transpose());
     }else {
         R0 = Utility::g2R(g);//根据基于当前世界坐标系计算得到的重力方向与实际重力方向差异，计算当前世界坐标系的修正量；
 //    R0 = RIC[0];
@@ -1611,6 +1580,7 @@ bool Estimator::visualInitialAlign()
         R0 = Utility::ypr2R(Eigen::Vector3d{-yaw, 0, 0}) * R0;
         ROS_WARN_STREAM("RIC * R0.transpose()     " << Utility::R2ypr(RIC[0] * R0.transpose()).transpose());
         g = R0 * g;  // g_w
+        ROS_WARN_STREAM("g = R0 * g " << g.transpose());
         //Matrix3d rot_diff = R0 * Rs[0].transpose();
     }
     Matrix3d rot_diff = R0;//将世界坐标系与重力方向对齐，之前的世界坐标系Rs[0]根据图像帧c0定义得到，并未对准到重力方向  R_w_c0
@@ -1624,16 +1594,12 @@ bool Estimator::visualInitialAlign()
     ROS_WARN_STREAM("g0     " << g.transpose());
     ROS_WARN_STREAM("my R0  " << Utility::R2ypr(Rs[0]).transpose());
     ROS_WARN_STREAM("R0  " << Utility::R2ypr(R0).transpose());
-    dR = rio.transpose() * RIC[0] * R0.transpose();
-    ROS_WARN_STREAM("dR " << Utility::R2ypr(dR).transpose());
-//    tio.setZero();
-//    tio = Vector3d{5.0,5.0,5.0};
-//    ROS_WARN_STREAM("my R0  " << Rs[0]);
-
-    // calib rio
-//    if (ONLY_INITIAL_WITH_WHEEL) {
-//        WheelExtrisincInitialize(all_image_frame, r_A, R0, rio, tio, x);
+//    if(!ESTIMATE_RIO) {
+//        dR = rio.transpose() * RIC[0] * R0.transpose();
+        dR = rio_0.transpose();
 //    }
+//    ROS_WARN_STREAM("dR " << Utility::R2ypr(dR).transpose());
+//    R0 = RIC[0];
 
     // end
 
@@ -1697,23 +1663,14 @@ void Estimator::vector2double()
             para_SpeedBias[i][0] = Vs[i].x();
             para_SpeedBias[i][1] = Vs[i].y();
             para_SpeedBias[i][2] = Vs[i].z();
-//            para_SpeedBias[i][0] = Vb[i].x();
-//            para_SpeedBias[i][1] = Vb[i].y();
-//            para_SpeedBias[i][2] = Vb[i].z();
 
             para_SpeedBias[i][3] = Bas[i].x();
             para_SpeedBias[i][4] = Bas[i].y();
             para_SpeedBias[i][5] = Bas[i].z();
-//            para_SpeedBias[i][0] = Bas[i].x();
-//            para_SpeedBias[i][1] = Bas[i].y();
-//            para_SpeedBias[i][2] = Bas[i].z();
 
             para_SpeedBias[i][6] = Bgs[i].x();
             para_SpeedBias[i][7] = Bgs[i].y();
             para_SpeedBias[i][8] = Bgs[i].z();
-//            para_SpeedBias[i][3] = Bgs[i].x();
-//            para_SpeedBias[i][4] = Bgs[i].y();
-//            para_SpeedBias[i][5] = Bgs[i].z();
         }
     }
 
@@ -1814,18 +1771,8 @@ void Estimator::double2vector()
         dR = Quaterniond(para_Ex_NHC[0][6],
                          para_Ex_NHC[0][3],
                          para_Ex_NHC[0][4],
-                         para_Ex_NHC[0][5]).toRotationMatrix().transpose();
-
-//        ROS_WARN_STREAM("dR " << Utility::R2ypr(dR).transpose());
-
-//        Matrix3d R_w_0;
-//        Vector3d w_x_0 = gyr_0 - Bgs[frame_count];
-//        R_w_0 << 0, -w_x_0(2), w_x_0(1),
-//                w_x_0(2), 0, -w_x_0(0),
-//                -w_x_0(1), w_x_0(0), 0;
-
-        Matrix3d R_w_0;
-//        Vector3d vel_0;
+                         para_Ex_NHC[0][5]).normalized().toRotationMatrix().transpose();
+//        dR = Utility::ypr2R(Vector3d{Utility::R2ypr(dR).x(), 0 , 0});
 
         for (int i = 0; i <= WINDOW_SIZE; i++)
         {
@@ -1837,52 +1784,20 @@ void Estimator::double2vector()
                                     para_Pose[i][2] - para_Pose[0][2]) + origin_P0;
 
 
-//            Vb[i] = Vector3d(para_SpeedBias[i][0],
-//                             para_SpeedBias[i][1],
-//                             para_SpeedBias[i][2]);
-
             Vs[i] = rot_diff * Vector3d(para_SpeedBias[i][0],
                                         para_SpeedBias[i][1],
                                         para_SpeedBias[i][2]);
 
-//            if (i == 0) {
-////                vel_0 = pre_integrations[i + 1]->linearized_vel;
-//                Vector3d w_x_0 = pre_integrations[i + 1]->linearized_gyr - pre_integrations[i + 1]->linearized_bg;
-//                R_w_0 << 0, -w_x_0(2), w_x_0(1),
-//                        w_x_0(2), 0, -w_x_0(0),
-//                        -w_x_0(1), w_x_0(0), 0;
-////                ROS_WARN("Here is the test 1");
-//            }else{
-////                vel_0 = pre_integrations[i]->vel_1;
-//                Vector3d w_x_0 = pre_integrations[i]->gyr_1 - pre_integrations[i]->linearized_bg;
-////                ROS_WARN_STREAM("pre_integrations[i]->gyr_buf " << pre_integrations[i]->gyr_buf.size());
-////                ROS_WARN_STREAM("linearized_bg " << pre_integrations[i]->linearized_bg);
-////                ROS_WARN_STREAM("vel 0 " << vel_0.transpose());
-//                R_w_0 << 0, -w_x_0(2), w_x_0(1),
-//                        w_x_0(2), 0, -w_x_0(0),
-//                        -w_x_0(1), w_x_0(0), 0;
-////                ROS_WARN("Here is the test %d", i);
-//            }
-
-
-//            Vs[i] = rot_diff * Rs[i] * (RIC[0] * R0.transpose() * dR * vel_0 - R_w_0 * tio_0);
 
 
             Bas[i] = Vector3d(para_SpeedBias[i][3],
                               para_SpeedBias[i][4],
                               para_SpeedBias[i][5]);
 
-//            Bas[i] = Vector3d(para_SpeedBias[i][0],
-//                              para_SpeedBias[i][1],
-//                              para_SpeedBias[i][2]);
 
             Bgs[i] = Vector3d(para_SpeedBias[i][6],
                               para_SpeedBias[i][7],
                               para_SpeedBias[i][8]);
-
-//            Bgs[i] = Vector3d(para_SpeedBias[i][3],
-//                              para_SpeedBias[i][4],
-//                              para_SpeedBias[i][5]);
 
         }
 
@@ -1920,10 +1835,12 @@ void Estimator::double2vector()
                           para_Ex_Pose_wheel[0][3],
                           para_Ex_Pose_wheel[0][4],
                           para_Ex_Pose_wheel[0][5]).normalized().toRotationMatrix();
-//        ROS_WARN_STREAM("calib RIO " << endl << rio);
-//        ROS_WARN_STREAM("calib RIO ypr " << Utility::R2ypr_m(rio).transpose());  // atan
-//        ROS_WARN_STREAM("calib TIO     " << tio.transpose());
-//        ROS_WARN_STREAM("tio T    " << (-rio.transpose() * tio).transpose());
+#if !WHEEL
+        ROS_WARN_STREAM("calib RIO " << endl << rio);
+        ROS_WARN_STREAM("calib RIO ypr " << Utility::R2ypr_m(rio).transpose());  // atan
+        ROS_WARN_STREAM("calib TIO     " << tio.transpose());
+        ROS_WARN_STREAM("tio T    " << (-rio.transpose() * tio).transpose());
+#endif
         sx = para_Ix_sx_wheel[0][0];
         sy = para_Ix_sy_wheel[0][0];
         sw = para_Ix_sw_wheel[0][0];
@@ -2034,7 +1951,6 @@ void Estimator::optimization()
 //    problem.AddParameterBlock(para_Gravity[0], SIZE_G, local_parameterization);
 ////    if (solver_flag == NON_LINEAR)
 //        problem.SetParameterBlockConstant(para_Gravity[0]);    // This is a stop button !!!
-//    problem.SetParameterBlockConstant(para_Ex_NHC[0]);
     //TODO 为什么有IMU就不需要固定第一帧位姿
     if(!USE_IMU)
         problem.SetParameterBlockConstant(para_Pose[0]);
@@ -2130,22 +2046,22 @@ void Estimator::optimization()
         }
     }
 
-    if(USE_PLANE){
-        ceres::LocalParameterization *local_parameterization = new OrientationSubsetParameterization(std::vector<int>{2});
-        problem.AddParameterBlock(para_plane_R[0], SIZE_ROTATION, local_parameterization);
-        problem.AddParameterBlock(para_plane_Z[0], 1);
-        if (frame_count == WINDOW_SIZE || openPlaneEstimation)
-        {
-            //ROS_INFO("estimate extrinsic param");
-            openPlaneEstimation = 1;
-        }
-        else
-        {
-            //ROS_INFO("fix extinsic param");
-            problem.SetParameterBlockConstant(para_plane_R[0]);
-            problem.SetParameterBlockConstant(para_plane_Z[0]);
-        }
-    }
+//    if(USE_PLANE){
+//        ceres::LocalParameterization *local_parameterization = new OrientationSubsetParameterization(std::vector<int>{2});
+//        problem.AddParameterBlock(para_plane_R[0], SIZE_ROTATION, local_parameterization);
+//        problem.AddParameterBlock(para_plane_Z[0], 1);
+//        if (frame_count == WINDOW_SIZE || openPlaneEstimation)
+//        {
+//            //ROS_INFO("estimate extrinsic param");
+//            openPlaneEstimation = 1;
+//        }
+//        else
+//        {
+//            //ROS_INFO("fix extinsic param");
+//            problem.SetParameterBlockConstant(para_plane_R[0]);
+//            problem.SetParameterBlockConstant(para_plane_Z[0]);
+//        }
+//    }
 
     if(USE_LIDAR){
 //        ceres::LocalParameterization *local_parameterization = new PoseLocalParameterization();
@@ -2207,15 +2123,13 @@ void Estimator::optimization()
             int j = i + 1;
             if (pre_integrations[j]->sum_dt > 10.0) //两图像帧之间时间过长，不使用中间的预积分
                 continue;
+#if !WHEEL
             IMUFactor* imu_factor = new IMUFactor(pre_integrations[j]);
             problem.AddResidualBlock(imu_factor, NULL, para_Pose[i], para_SpeedBias[i], para_Pose[j], para_SpeedBias[j]);
-//            problem.AddResidualBlock(imu_factor, NULL, para_Pose[i], para_SpeedBias[i], para_Pose[j], para_SpeedBias[j], para_Gravity[0]);
-
-//            IMUWheelFactor* imu_factor = new IMUWheelFactor(pre_integrations[j]);
-//            IMUWheelLineFactor* imu_factor = new IMUWheelLineFactor(pre_integrations[j]);
-//            ROS_WARN_STREAM("gyr0 1 2 " << endl << pre_integrations[j]->gyr_buf[0].transpose());
-//            problem.AddResidualBlock(imu_factor, NULL, para_Pose[i], para_SpeedBias[i], para_Pose[j], para_SpeedBias[j], para_Ex_NHC[0]);
-
+#else
+            IMUWheelLineFactor* imu_factor = new IMUWheelLineFactor(pre_integrations[j]);
+            problem.AddResidualBlock(imu_factor, NULL, para_Pose[i], para_SpeedBias[i], para_Pose[j], para_SpeedBias[j], para_Ex_NHC[0]);
+#endif
 //            std::vector<const double *> parameters(4);
 //            parameters[0] = para_Pose[i];
 //            parameters[1] = para_SpeedBias[i];
@@ -2239,7 +2153,7 @@ void Estimator::optimization()
             }
         }
         problem.AddParameterBlock(para_Ex_NHC[0], SIZE_NHC, local_parameterization);
-        if(!ESTIMATE_TIO && !ESTIMATE_RIO){
+        if(!ESTIMATE_TIO && !ESTIMATE_RIO || solver_flag == INITIAL){
             problem.SetParameterBlockConstant(para_Ex_NHC[0]);
         }
     }
@@ -2266,19 +2180,19 @@ void Estimator::optimization()
         }
     }
 
-    if(USE_WHEEL && ONLY_INITIAL_WITH_WHEEL)
-    {
-        for (int i = 0; i < frame_count; i++)
-        {
-            int j = i + 1;
-            if (pre_integrations[j]->sum_dt > 10.0) //两图像帧之间时间过长，不使用中间的预积分
-                continue;
-            // TODO 添加卡方检验
-            NonholonomicFactor* nonholonomic_factor = new NonholonomicFactor(pre_integrations[j]);
-            problem.AddResidualBlock(nonholonomic_factor, NULL, para_Pose[i], para_SpeedBias[i], para_Pose[j], para_SpeedBias[j], para_Ex_NHC[0]);
-
-        }
-    }
+//    if(USE_WHEEL && ONLY_INITIAL_WITH_WHEEL)
+//    {
+//        for (int i = 0; i < frame_count; i++)
+//        {
+//            int j = i + 1;
+//            if (pre_integrations[j]->sum_dt > 10.0) //两图像帧之间时间过长，不使用中间的预积分
+//                continue;
+//            // TODO 添加卡方检验
+//            NonholonomicFactor* nonholonomic_factor = new NonholonomicFactor(pre_integrations[j]);
+//            problem.AddResidualBlock(nonholonomic_factor, NULL, para_Pose[i], para_SpeedBias[i], para_Pose[j], para_SpeedBias[j], para_Ex_NHC[0]);
+//
+//        }
+//    }
 
     if(USE_PLANE)
     {
@@ -2295,6 +2209,17 @@ void Estimator::optimization()
 //            plane_factor->check(const_cast<double **>(parameters.data()));
         }
     }
+
+    if(static_flag){
+        for (int i = 0; i < frame_count; i++)
+        {
+            int j = i + 1;
+            ZUPTFactor* zupt_factor = new ZUPTFactor();
+            problem.AddResidualBlock(zupt_factor, NULL, para_Pose[i], para_SpeedBias[i], para_Pose[j], para_SpeedBias[j]);
+        }
+    }
+
+
 
     if(USE_LIDAR)
     {
@@ -2446,18 +2371,17 @@ void Estimator::optimization()
         {
             if (pre_integrations[1]->sum_dt < 10.0)
             {
+#if !WHEEL
                 IMUFactor* imu_factor = new IMUFactor(pre_integrations[1]);
-//                IMUWheelFactor* imu_factor = new IMUWheelFactor(pre_integrations[1]);
-//                IMUWheelLineFactor* imu_factor = new IMUWheelLineFactor(pre_integrations[1]);
-//                ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(imu_factor, NULL,
-//                                                                           vector<double *>{para_Pose[0], para_SpeedBias[0], para_Pose[1], para_SpeedBias[1], para_Ex_NHC[0]},
-//                                                                           vector<int>{0, 1});//边缘化 para_Pose[0], para_SpeedBias[0]
-//                ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(imu_factor, NULL,
-//                                                                               vector<double *>{para_Pose[0], para_SpeedBias[0], para_Pose[1], para_SpeedBias[1], para_Gravity[0]},
-//                                                                               vector<int>{0, 1});//边缘化 para_Pose[0], para_SpeedBias[0]
                 ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(imu_factor, NULL,
                                                                            vector<double *>{para_Pose[0], para_SpeedBias[0], para_Pose[1], para_SpeedBias[1]},
                                                                            vector<int>{0, 1});//边缘化 para_Pose[0], para_SpeedBias[0]
+#else
+                IMUWheelLineFactor* imu_factor = new IMUWheelLineFactor(pre_integrations[1]);
+                ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(imu_factor, NULL,
+                                                                           vector<double *>{para_Pose[0], para_SpeedBias[0], para_Pose[1], para_SpeedBias[1], para_Ex_NHC[0]},
+                                                                           vector<int>{0, 1});//边缘化 para_Pose[0], para_SpeedBias[0]
+#endif
                 marginalization_info->addResidualBlockInfo(residual_block_info);
             }
         }
@@ -2474,17 +2398,17 @@ void Estimator::optimization()
             }
         }
 
-        if(USE_WHEEL && ONLY_INITIAL_WITH_WHEEL)
-        {
-            if (pre_integrations[1]->sum_dt < 10.0)
-            {
-                NonholonomicFactor* nonholonomic_factor = new NonholonomicFactor(pre_integrations[1]);
-                ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(nonholonomic_factor, NULL,
-                                                                               vector<double *>{para_Pose[0], para_SpeedBias[0], para_Pose[1], para_SpeedBias[1], para_Ex_NHC[0]},
-                                                                               vector<int>{0, 1});//边缘化 para_Pose[0], para_SpeedBias[0]
-                marginalization_info->addResidualBlockInfo(residual_block_info);
-            }
-        }
+//        if(USE_WHEEL && ONLY_INITIAL_WITH_WHEEL)
+//        {
+//            if (pre_integrations[1]->sum_dt < 10.0)
+//            {
+//                NonholonomicFactor* nonholonomic_factor = new NonholonomicFactor(pre_integrations[1]);
+//                ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(nonholonomic_factor, NULL,
+//                                                                               vector<double *>{para_Pose[0], para_SpeedBias[0], para_Pose[1], para_SpeedBias[1], para_Ex_NHC[0]},
+//                                                                               vector<int>{0, 1});//边缘化 para_Pose[0], para_SpeedBias[0]
+//                marginalization_info->addResidualBlockInfo(residual_block_info);
+//            }
+//        }
 
         //平面部分，边缘化第0帧状态向量
         if(USE_PLANE)
@@ -2493,6 +2417,14 @@ void Estimator::optimization()
             ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(plane_factor, NULL,
                                                                            vector<double *>{para_Pose[0], para_Ex_Pose_wheel[0], para_plane_R[0], para_plane_Z[0]},
                                                                            vector<int>{0});//边缘化 para_Pose[0]
+            marginalization_info->addResidualBlockInfo(residual_block_info);
+        }
+
+        if(static_flag){
+            ZUPTFactor* zupt_factor = new ZUPTFactor();
+            ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(zupt_factor, NULL,
+                                                                           vector<double *>{para_Pose[0], para_SpeedBias[0], para_Pose[1], para_SpeedBias[1]},
+                                                                           vector<int>{0, 1});//边缘化 para_SpeedBias[0]
             marginalization_info->addResidualBlockInfo(residual_block_info);
         }
 
@@ -2723,7 +2655,7 @@ void Estimator::slideWindow()
                 Rs[i].swap(Rs[i + 1]);
                 Ps[i].swap(Ps[i + 1]);
 #if !WHEEL
-                if(USE_IMU && !USE_WHEEL)
+                if(USE_IMU)
                 {
                     std::swap(pre_integrations[i], pre_integrations[i + 1]);
 
@@ -2781,7 +2713,7 @@ void Estimator::slideWindow()
                 vel_velocity_buf[WINDOW_SIZE].clear();
             }
 #else
-            if(USE_IMU && !USE_WHEEL)
+            if(USE_IMU)
             {
                 Vs[WINDOW_SIZE] = Vs[WINDOW_SIZE - 1];
                 Bas[WINDOW_SIZE] = Bas[WINDOW_SIZE - 1];
@@ -2827,7 +2759,7 @@ void Estimator::slideWindow()
             Ps[frame_count - 1] = Ps[frame_count];
             Rs[frame_count - 1] = Rs[frame_count];
 #if !WHEEL
-            if(USE_IMU && !USE_WHEEL) //IMU数据衔接，预积分的传播
+            if(USE_IMU) //IMU数据衔接，预积分的传播
             {
                 for (unsigned int i = 0; i < dt_buf[frame_count].size(); i++)
                 {
@@ -3155,26 +3087,68 @@ void Estimator::updateLatestStates()
         tmp_gyrBuf.pop();
     }
 
-//    Matrix3d tmp_R = Eigen::Quaterniond::FromTwoVectors(Vb[frame_count], Eigen::Vector3d{1,0,0}).toRotationMatrix();
-    Matrix3d tmp_R = dR;
-//    rio_0 = RIC[0] * (Utility::ypr2R(Eigen::Vector3d{Utility::R2ypr(tmp_R).x() , 0, 0}) * R0).transpose();
-    rio_0 = (dR * R0 * RIC[0].transpose()).transpose();
-//    rio_0 = dR.transpose();
-//    ROS_WARN_STREAM("Vb " << Vb[frame_count].transpose());
-
+    if(ESTIMATE_RIO) {
+//        Matrix3d tmp_R = Utility::ypr2R(Vector3d{Utility::R2ypr(dR).x(), 0 , 0});
+        Matrix3d tmp_R = dR;
+//        rio_0 = (tmp_R * R0 * RIC[0].transpose()).transpose();
+        rio_0 = dR.transpose();
         yaw_test = Utility::R2ypr(rio_0).x();
         pitch_test = Utility::R2ypr(rio_0).y();
         roll_test = Utility::R2ypr(rio_0).z();
         tmpR_test = Utility::R2ypr(tmp_R).x();
-        ROS_WARN_STREAM("rio  ypr   " << Utility::R2ypr(rio_0).transpose());
+        ROS_WARN_STREAM("rio  ypr   " << Utility::R2ypr_m(rio_0).transpose());
         ROS_WARN_STREAM("rio     " << endl << rio_0);
         ROS_WARN_STREAM("tmpR ypr     " << endl << Utility::R2ypr_m(tmp_R).transpose());
+//        yaw_sum_vec.push_back(Utility::R2ypr_m(tmp_R).norm());
+//        if (yaw_sum_vec.size() == 100) {
+//            double sum = std::accumulate(std::begin(yaw_sum_vec), std::end(yaw_sum_vec), 0.0);
+//            double mean = sum / yaw_sum_vec.size();
+//
+//            double accum = 0.0;
+//            std::for_each(std::begin(yaw_sum_vec), std::end(yaw_sum_vec), [&](const double d) {
+//                accum += (d - mean) * (d - mean);
+//            });
+//
+//            double stdev = sqrt(accum / (yaw_sum_vec.size() - 1));
+////            x_test = stdev;
+//            ROS_WARN_STREAM("std rotation: " << stdev);
+//            if (stdev < 0.05) {
+//                ESTIMATE_RIO = 0;
+//            } else
+//                yaw_sum_vec.pop_front();
+//        }
+    }else{
+        ROS_WARN_STREAM("RIO Calibration finished! " << Utility::R2ypr_m(rio_0).transpose());
+        ROS_WARN_STREAM("RIO Calibration  " << endl << rio_0);
+    }
 
+    if(ESTIMATE_TIO) {
         x_test = tio_0.x();
         y_test = tio_0.y();
         z_test = tio_0.z();
-        ROS_WARN_STREAM("toi     " << tio_0.transpose());
-        ROS_WARN_STREAM("tio    " << (-rio_0.transpose() * tio_0).transpose());
+        ROS_WARN_STREAM("tio     " << tio_0.transpose());
+//        xy_sum_vec.push_back(tio_0.norm());
+//        if (xy_sum_vec.size() == 100) {
+//            double sum = std::accumulate(std::begin(xy_sum_vec), std::end(xy_sum_vec), 0.0);
+//            double mean = sum / xy_sum_vec.size();
+//
+//            double accum = 0.0;
+//            std::for_each(std::begin(xy_sum_vec), std::end(xy_sum_vec), [&](const double d) {
+//                accum += (d - mean) * (d - mean);
+//            });
+//
+//            double stdev = sqrt(accum / (xy_sum_vec.size() - 1));
+////            y_test = stdev;
+//            ROS_WARN_STREAM("std translation: " << stdev);
+//            if (stdev < 0.05) {
+//                ESTIMATE_TIO = 0;
+//            } else
+//                xy_sum_vec.pop_front();
+//        }
+    }else{
+        ROS_WARN_STREAM("TIO Calibration finished! " << tio_0.transpose());
+    }
+
 
     mPropagate.unlock();
 
@@ -3190,296 +3164,6 @@ void Estimator::updateLatestStates()
     //latest_V_wheel可以在fastPredictWheel算出来，不需要初值
 //    latest_V_wheel = Vs[frame_count];
     latest_vel_wheel_0 = vel_0_wheel;
-
-//    g = (g + B * delta_g).normalized() * G.norm();
-//    ROS_WARN_STREAM("optimal g    " << g.transpose());
-//    ROS_WARN_STREAM("optimal g norm    " << g.norm());
-//    R00 = Utility::g2R(g);
-//    ROS_WARN_STREAM("Rwg ypr    " << Utility::R2ypr_m(rwg).transpose());
-//    yaw_test = Utility::R2ypr(rwg).x();
-//    pitch_test = Utility::R2ypr(rwg).y();
-//    roll_test = Utility::R2ypr(rwg).z();
-
-//    ROS_WARN_STREAM("calib RIO ypr " << Utility::R2ypr(rio).transpose());
-//    ROS_WARN_STREAM("calib RIO " << endl << rio);
-//    yaw_test = tio.x();
-//    pitch_test = tio.y();
-//    roll_test = tio.z();
-
-//    if (USE_WHEEL && ONLY_INITIAL_WITH_WHEEL) {
-    if (0) {
-        Matrix3d rio_1;
-        Matrix3d rio_0;
-//        Vector2d tio_0;
-        Vector3d tio_0;
-        if (!checkZeroV()) {
-//        R0 = RIC[0];  // special setting for ridgeback dataset
-            if (checkLine()) {
-//            if(latest_gyr_0.norm() < 0.3){
-                if (!LS_list.empty())
-                    LS_list.pop_front();
-                if (!line_start) {
-//                    r_A = MatrixXd::Identity(6, 6);
-//                    x_ep = VectorXd::Zero(6) ;
-                    corner_count = 0;
-                    yaw_sum_vec.clear();
-                    line_start = true;
-                    corner_start = false;
-                }
-            } else {
-                corner_count++;
-                ROS_WARN_STREAM("corner count " << corner_count);
-                if (!corner_start) {
-//                    r_A_0 = Matrix3d::Identity();
-//                    x_ep_0.setZero();
-//                    r_A = MatrixXd::Identity(6, 6);
-//                    x_ep = VectorXd::Zero(6);
-                    xy_sum_vec.clear();
-                    corner_start = true;
-                    line_start = false;
-
-                }
-            }
-
-            if (line_start) {
-
-                if(STEREO)
-                    R0 = RIC[0];
-
-                Matrix3d R_w_x;
-                MatrixXd H{3, 6};
-                MatrixXd K{6, 3};
-                H.setZero();
-                Vector3d Z;
-                Z.setZero();
-
-                Vector3d w_x =  latest_gyr_0 - latest_Bg;
-                R_w_x << 0, -w_x(2), w_x(1),
-                        w_x(2), 0, -w_x(0),
-                        -w_x(1), w_x(0), 0;
-                ROS_WARN_STREAM("omega    " << w_x.transpose());
-
-                H.block<3, 3>(0, 0) = RIC[0] * R0.transpose();
-
-                H.block<3, 3>(0, 3) = R_w_x ;  // t_o_i
-
-//                    H.block<1, 1>(0, 0) = Matrix<double, 1, 1>::Identity();
-//                H.block<3, 3>(0, 3) = RIC[0] * R0.transpose() * R_w_x;
-                Z = latest_Q.toRotationMatrix().transpose() * latest_V;
-                ROS_WARN_STREAM("Z " << Z.transpose() );
-
-                Matrix3d cov = 0.001 * MatrixXd::Identity(3, 3);
-                K = r_A * H.transpose() *
-                    (H * r_A * H.transpose() + ff * cov).inverse();
-                x_ep = x_ep + K * (Z - H * x_ep);
-//                ROS_WARN_STREAM("x_ep: " << x_ep.tail<3>().transpose());
-                r_A = (MatrixXd::Identity(6, 6) - K * H) * r_A / ff;
-
-                tmp_R = Eigen::Quaterniond::FromTwoVectors(x_ep.head<3>(),
-                                                           Eigen::Vector3d{1, 0, 0}).toRotationMatrix();
-                rio_0 = RIC[0] * R0.transpose() *
-                        Utility::ypr2R(Eigen::Vector3d{Utility::R2ypr(tmp_R).x(), 0, 0}).transpose();
-                rio_1 = RIC[0] * R0.transpose() * tmp_R.transpose();
-//                double tmp_R = acos(x_ep.head<3>().x()) / M_PI * 180.0;
-//                cout << "x_ep" << x_ep.transpose() << endl;
-//                rio = RIC[0] * R0.transpose() * Utility::ypr2R(Eigen::Vector3d{tmp_R , 0, 0}).transpose();
-//                    ROS_WARN_STREAM("tmp_R " << endl << tmp_R);
-//                    rio = RIC[0] * R0.transpose() * Utility::ypr2R(Eigen::Vector3d{tmp_R , 0, 0}).transpose();
-//                    rio = RIC[0] * (tmp_R * R0).transpose();
-
-//                ROS_WARN_STREAM("calib RIO " << endl << rio_0);
-                ROS_WARN_STREAM("calib RIO ypr " << Utility::R2ypr_m(rio_0).transpose());  // atan
-                ROS_WARN_STREAM("calib RIO_1 ypr " << Utility::R2ypr_m(rio_1).transpose());  // atan
-                ROS_WARN_STREAM("calib tmp_R ypr " << Utility::R2ypr_m(tmp_R).transpose());  // atan
-
-                yaw_test = Utility::R2ypr(rio_0).x();
-                pitch_test = Utility::R2ypr(rio_0).y();
-                roll_test = Utility::R2ypr(rio_0).z();
-
-//                yaw_test = x_ep.head<3>().x();
-//                pitch_test = x_ep.head<3>().y();
-//                roll_test = x_ep.head<3>().z();
-
-//                yaw_test = 2.0;
-//                pitch_test = 2.0;
-//                roll_test = 2.0;
-                tio_0 = x_ep.tail<3>();
-                Vector3d v_tmp = x_ep.head<3>() - latest_vel_wheel_0;
-                Vector3d Z_tmp = R_w_x.transpose() * (latest_Q.toRotationMatrix().transpose() * latest_V -
-                                                      rio * latest_vel_wheel_0);
-
-                x_test = tio_0.x();
-                y_test = tio_0.y();
-                z_test = tio_0.z();
-
-                if (!rio_finish) {
-                    yaw_sum_vec.push_back(Utility::R2ypr_m(rio_0).norm());
-                    if (yaw_sum_vec.size() == 50) {
-                        double sum = std::accumulate(std::begin(yaw_sum_vec), std::end(yaw_sum_vec), 0.0);
-                        double mean = sum / yaw_sum_vec.size();
-
-                        double accum = 0.0;
-                        std::for_each(std::begin(yaw_sum_vec), std::end(yaw_sum_vec), [&](const double d) {
-                            accum += (d - mean) * (d - mean);
-                        });
-
-                        double stdev = sqrt(accum / (yaw_sum_vec.size() - 1));
-                        ROS_WARN_STREAM("std rotation: " << stdev);
-                        if (stdev < 0.5) {
-                            rio_finish = true;
-                            rio = rio_0;
-                        } else
-                            yaw_sum_vec.pop_front();
-                    }
-                } else {
-                    ROS_WARN_STREAM("RIO Calibration finished! " << Utility::R2ypr_m(rio).transpose());
-                    ROS_WARN_STREAM("RIO Calibration  " << endl << rio);
-                }
-
-            }
-            if (corner_start) {
-
-//                yaw_test = 10.0;
-//                pitch_test = 10.0;
-//                roll_test = 10.0;
-//            tmp_R = Matrix3d::Identity();
-                rio_finish = true;
-                if (rio_finish) {
-
-                    /* data initialization */
-                    rio = RIO;
-                    R0 = RIC[0];
-
-                    Matrix3d R_w_x;
-//                    MatrixXd H{2, 2};
-//                    MatrixXd H{3, 3};
-                    MatrixXd H{3, 6};
-//                    MatrixXd K{2, 2};
-//                    MatrixXd K{3, 3};
-                    MatrixXd K{6, 3};
-                    H.setZero();
-//                    Vector2d Z;
-                    Vector3d Z;
-                    Z.setZero();
-
-                    Vector3d w_x =  latest_gyr_0 - latest_Bg;
-                    R_w_x << 0, -w_x(2), w_x(1),
-                            w_x(2), 0, -w_x(0),
-                            -w_x(1), w_x(0), 0;
-                    Vector3d r_w_x{-R_w_x(1,2),R_w_x(0,2),-R_w_x(0,1)};
-                    ROS_WARN_STREAM("omega    " << w_x.transpose());
-
-                    H.block<3, 3>(0, 0) = RIC[0] * R0.transpose();
-
-                    H.block<3, 3>(0, 3) = - R_w_x * rio ;  // t_o_i
-
-//                    H = R_w_x ;  // t_o_i
-//                    H = (RIC[0] * R0.transpose() * R_w_x).block<2, 2>(0, 0);  // t_o_i
-                    Z = latest_Q.toRotationMatrix().transpose() * latest_V;
-                    Vector3d Z_tmp = R_w_x.transpose() * (latest_Q.toRotationMatrix().transpose() * latest_V -
-                                                       rio * latest_vel_wheel_0);
-//                Z = rio.transpose() * latest_Q.toRotationMatrix().transpose() * latest_V -
-//                                   latest_vel_wheel_0;
-//                    Z = (latest_Q.toRotationMatrix().transpose() * latest_V -
-//                         RIO * latest_vel_wheel_0).segment<2>(0);
-//                    Vector3d err = (latest_Q.toRotationMatrix().transpose() * latest_V);
-//                    Vector3d err_1 = rio.transpose() * latest_vel_wheel_0;
-//                    ROS_WARN_STREAM("err    " << err.transpose());
-//                    ROS_WARN_STREAM("err_1    " << err_1.transpose());
-
-//                    Matrix3d cov = pre_integrations[frame_count]->covariance.block<3, 3>(0, 0) / (dt * dt);
-                    Matrix3d cov = 0.001 * MatrixXd::Identity(3, 3);
-//                    Matrix2d cov = 0.001 * MatrixXd::Identity(2, 2);
-
-
-                    /* RLS steps */
-                    K = r_A_0 * H.transpose() * (H * r_A_0 * H.transpose() + ff * cov).inverse();
-                    x_ep_0 = x_ep_0 + K * (Z - H * x_ep_0);
-                    r_A_0 = (MatrixXd::Identity(6, 6) - K * H) * r_A_0 / ff;
-
-//                    r_A_0 = (MatrixXd::Identity(2, 2) - K * H) * r_A_0 / ff;
-
-                    tio_0 = x_ep_0.tail<3>();
-//                    tio_0(2) = 0.0;
-                    ROS_WARN_STREAM("tio    " << tio_0.transpose());
-
-                    /* LS Methods */
-                     /*{
-                        int window_size = 10;
-                        LS_list.push_back(make_pair(H, Z));
-                        ROS_WARN_STREAM("LS_lit size: " << LS_list.size());
-                        if (LS_list.size() == window_size){
-                            MatrixXd A{(window_size ) * 3, 6};
-                            A.setZero();
-                            VectorXd b{(window_size ) * 3};
-                            b.setZero();
-                            MatrixXd cov{(window_size ) * 3, (window_size ) * 3};
-                            cov.setZero();
-
-                            int i=0;
-                            for (list<pair<Matrix<double, 3, 6>, Vector3d>>::iterator it = LS_list.begin(); it != LS_list.end(); it ++, i++) {
-                                A.block<3, 3>(i * 3, 0) = it->first.block<3, 3>(0, 0);
-                                A.block<3, 3>(i * 3, 3) = it->first.block<3, 3>(0, 3);
-                                b.segment<3>(i * 3) = it->second;
-                            }
-                            MatrixXd cov_inv = cov.setIdentity();
-                            MatrixXd r_A = A.transpose() * cov_inv * A;
-                            VectorXd r_b = A.transpose() * cov_inv * b;
-                            x_ep_0 = r_A.ldlt().solve(r_b).tail<3>();
-
-                            tio_0 = x_ep_0;
-                            ROS_WARN_STREAM("tio    " << tio_0.transpose());
-                            LS_list.pop_front();
-                        }
-                    }*/
-
-
-                    /* result print and show */
-//                    Vector3d Z_tmp = x_ep_0.head<3>() - latest_vel_wheel_0;
-//                    double Z_tmp = ((latest_Q.toRotationMatrix().transpose() * latest_V).norm() -
-//                            (rio * latest_vel_wheel_0).norm()) / (latest_gyr_0 - latest_Bg).norm();
-//                    x_test = Z_tmp;
-//                    y_test = Z_tmp.y();
-//                    z_test = Z_tmp.z();
-//                    x_test = tio_0.x();
-//                    y_test = tio_0.y();
-//                    z_test = tio_0.z();
-                    x_test = tio_0.x();
-                    y_test = tio_0.y();
-                    z_test = tio_0.z();
-
-
-
-
-                    if (!tio_finish) {
-                        xy_sum_vec.push_back(tio_0.norm());
-                        if (xy_sum_vec.size() == 20) {
-                            double sum = std::accumulate(std::begin(xy_sum_vec), std::end(xy_sum_vec), 0.0);
-                            double mean = sum / xy_sum_vec.size();
-
-                            double accum = 0.0;
-                            std::for_each(std::begin(xy_sum_vec), std::end(xy_sum_vec), [&](const double d) {
-                                accum += (d - mean) * (d - mean);
-                            });
-
-                            double stdev = sqrt(accum / (xy_sum_vec.size() - 1));
-                            ROS_WARN_STREAM("std translation: " << stdev);
-                            if (stdev < 0.05) {
-                                tio_finish = true;
-//                                tio.segment<2>(0) = tio_0;
-                                tio = tio_0;
-                            } else
-                                xy_sum_vec.pop_front();
-                        }
-                    } else {
-                        ROS_WARN_STREAM("TIO Calibration finished! " << tio.transpose());
-                        ROS_WARN_STREAM("TIO Calibration finished! T " << (-rio.transpose() * tio).transpose());
-                    }
-                }
-
-            }
-        }
-    }
 
     latest_gyr_wheel_0 = gyr_0_wheel;
     mWheelBuf.lock();
@@ -3522,7 +3206,7 @@ void Estimator::TransformToStart(PointType const *const pi, PointType *const po)
 
 // transform all lidar points to the start of the next frame
 
-void Estimator::TransformToEnd(PointType const *const pi, PointType *const po, double s)
+void Estimator::TransformToAnyTime(PointType const *const pi, PointType *const po, double s)
 {
 
     // undistort point first
@@ -3532,7 +3216,7 @@ void Estimator::TransformToEnd(PointType const *const pi, PointType *const po, d
     Eigen::Vector3d un_point{un_point_tmp.x, un_point_tmp.y, un_point_tmp.z};
     Eigen::Vector3d point_end = q_last_curr.inverse() * (un_point - t_last_curr);
 
-    //transform points from the end of the current frame to the next closest image frame  by zhh
+    //transform points from the end of the current frame to the next closest image frame  --by zhh
     Eigen::Quaterniond q_next_image_point = Eigen::Quaterniond::Identity().slerp(s, q_last_curr); // constant velocity assumption
     Eigen::Vector3d t_next_image_point = s * t_last_curr;
 
@@ -3560,7 +3244,36 @@ void Estimator::TransformToEnd(PointType const *const pi, PointType *const po, d
     po->intensity = int(pi->intensity);
 }
 
-void Estimator::LaserOdometryProcess(){
+void Estimator::TransformToEnd(PointType const *const pi, PointType *const po)
+{
+    // undistort point first
+    pcl::PointXYZI un_point_tmp;
+    TransformToStart(pi, &un_point_tmp);
+
+    Eigen::Vector3d un_point(un_point_tmp.x, un_point_tmp.y, un_point_tmp.z);
+    Eigen::Vector3d point_end = q_last_curr.inverse() * (un_point - t_last_curr);
+
+#if USE_IMU_FOR_DESKEW
+    Eigen::Vector3d imuShift{imuShiftFromStartX, imuShiftFromStartY, imuShiftFromStartZ};
+
+    Eigen::Quaterniond imuQstart = Eigen::AngleAxisd(imuYawStart, Eigen::Vector3d::UnitY()) * Eigen::AngleAxisd(imuPitchStart, Eigen::Vector3d::UnitX()) * Eigen::AngleAxisd(imuRollStart, Eigen::Vector3d::UnitZ());
+    Eigen::Quaterniond imuQlast = Eigen::AngleAxisd(-imuRollLast, Eigen::Vector3d::UnitZ()) * Eigen::AngleAxisd(-imuPitchLast, Eigen::Vector3d::UnitX()) * Eigen::AngleAxisd(-imuYawLast, Eigen::Vector3d::UnitY());
+
+//    Eigen::Quaterniond imuQstart = Eigen::AngleAxisd(imuRollStart, Eigen::Vector3d::UnitZ()) * Eigen::AngleAxisd(imuPitchStart, Eigen::Vector3d::UnitX()) * Eigen::AngleAxisd(imuYawStart, Eigen::Vector3d::UnitY());
+//    Eigen::Quaterniond imuQlast = Eigen::AngleAxisd(-imuYawLast, Eigen::Vector3d::UnitY()) * Eigen::AngleAxisd(-imuPitchLast, Eigen::Vector3d::UnitX()) * Eigen::AngleAxisd(-imuRollLast, Eigen::Vector3d::UnitZ());
+
+    point_end = imuQlast * imuQstart * (point_end - imuShift);
+#endif
+
+    po->x = point_end.x();
+    po->y = point_end.y();
+    po->z = point_end.z();
+
+    //Remove distortion time info
+    po->intensity = int(pi->intensity);
+}
+
+void Estimator::LaserOdometryProcess(double t0, double t1){
     int cornerPointsSharpNum = cornerPointsSharp->points.size();
     int surfPointsFlatNum = surfPointsFlat->points.size();
 
@@ -3577,11 +3290,26 @@ void Estimator::LaserOdometryProcess(){
     else {
         EdgePointsSum.clear();
         PlanePointsSum.clear();
+        // transform last points to current frame (match at the time of current frame)
+        int cornerPointsLastNum = laserCloudCornerLast->points.size();
+        for (int i = 0; i < cornerPointsLastNum; i++)
+        {
+            TransformToEnd(&laserCloudCornerLast->points[i], &laserCloudCornerLast->points[i]);
+        }
+
+        int surfPointsLastNum = laserCloudSurfLast->points.size();
+        for (int i = 0; i < surfPointsLastNum; i++)
+        {
+            TransformToEnd(&laserCloudSurfLast->points[i], &laserCloudSurfLast->points[i]);
+        }
         // find correspondence for corner features
         for (int i = 0; i < cornerPointsSharpNum; ++i) {
-//            ROS_WARN_STREAM("i " << i);
+            double pointTime = prevTime_lidar + cornerPointsSharp->points[i].intensity;
+            if (pointTime < t0 || pointTime > t1)
+                continue;
             TransformToStart(&(cornerPointsSharp->points[i]), &pointSel);
-            TransformToEnd(&pointSel, &pointSel, s_1);
+            // transform to the end for matching on the end
+            TransformToEnd(&pointSel, &pointSel);
             kdtreeCornerLast->nearestKSearch(pointSel, 1, pointSearchInd, pointSearchSqDis);
 
             int closestPointInd = -1, minPointInd2 = -1;
@@ -3755,6 +3483,24 @@ void Estimator::LaserOdometryProcess(){
                 }
             }
         }
+    }
+
+    int cornerPointsLessSharpNum = cornerPointsLessSharp->points.size();
+    for (int i = 0; i < cornerPointsLessSharpNum; i++)
+    {
+        TransformToEnd(&cornerPointsLessSharp->points[i], &cornerPointsLessSharp->points[i]);
+    }
+
+    int surfPointsLessFlatNum = surfPointsLessFlat->points.size();
+    for (int i = 0; i < surfPointsLessFlatNum; i++)
+    {
+        TransformToEnd(&surfPointsLessFlat->points[i], &surfPointsLessFlat->points[i]);
+    }
+
+    int laserCloudFullResNum = laserCloudFullRes->points.size();
+    for (int i = 0; i < laserCloudFullResNum; i++)
+    {
+        TransformToEnd(&laserCloudFullRes->points[i], &laserCloudFullRes->points[i]);
     }
 
     pcl::PointCloud<PointType>::Ptr laserCloudTemp = cornerPointsLessSharp;

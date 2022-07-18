@@ -87,10 +87,10 @@ body_T_wheel: !!opencv-matrix
   #       0.998652,  -0.0514934, -0.00649899,  -0.0,
   #      0,0,0,1]
   # EP scout2
-  #data: [0.0513279,   -0.998651, -0.00783981,0,
-  #       -0.0419753,  0.00568593,   -0.999102, 0,
-  #       0.997799,   0.0516109,  -0.0416269, 0,
-  #      0,0,0,1]
+#  data: [   0.999716,    0.022041, -0.00910497,-0.010474,
+#    -0.00884235,  -0.0119833,   -0.999889,-0.500772,
+#    -0.0221477,    0.999685,   -0.011785,0.110276,
+#        0,0,0,1]
 #  0.0317452  -0.999418 -0.0124697     -51.1387 -87.0999   140.46 scout2
 #  -0.0393967  0.0112151  -0.999161
 #  0.998719  0.0322098 -0.0390178
@@ -153,7 +153,7 @@ acc_n: 1.2075446068944201e-02          # accelerometer measurement noise standar
 gyr_n: 1.6075978387297028e-03         # gyroscope measurement noise standard deviation.     #0.05  0.004
 acc_w: 2.1473244394473552e-04         # accelerometer bias random work noise standard deviation.  #0.002
 gyr_w: 1.3518087259292092e-05       # gyroscope bias random work noise standard deviation.     #4.0e-5
-g_norm: 9.80151         # gravity magnitude
+g_norm: 9.8065         # gravity magnitude
 
 #wheel parameters
 # rad/s mono:0.004 stereo:0.002

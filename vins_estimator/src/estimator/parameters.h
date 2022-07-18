@@ -69,6 +69,7 @@ extern Eigen::MatrixXd B;
 extern Eigen::Vector2d delta_g;
 extern Eigen::Matrix3d dR;
 extern Eigen::Vector3d tio_0;
+extern Eigen::Matrix3d rio_0;
 
 extern double BIAS_ACC_THRESHOLD;
 extern double BIAS_GYR_THRESHOLD;

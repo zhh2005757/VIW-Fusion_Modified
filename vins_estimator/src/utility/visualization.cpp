@@ -340,7 +340,7 @@ void pubOdometry(const Estimator &estimator, const std_msgs::Header &header)
 //                                                          tmp_Q.w(), tmp_Q.x(), tmp_Q.y(), tmp_Q.z());
 
         // write result to file
-        ofstream foutC(VINS_RESULT_PATH, ios::app);
+        ofstream foutC(OUTPUT_FOLDER + "/vio_" + to_string(estimator.now) + ".csv", ios::app);
         foutC.setf(ios::fixed, ios::floatfield);
         foutC << std::setprecision(0)
               << header.stamp.toSec()*1e9<< " "

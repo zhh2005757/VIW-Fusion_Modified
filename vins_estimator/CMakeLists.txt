@@ -84,8 +84,8 @@ target_link_libraries(vins_node vins_lib)
 add_executable(viwo_node src/rosNodeTestWheel.cpp)
 target_link_libraries(viwo_node vins_lib)
 
-#add_executable(viwo_gazebo_node src/rosNodeTestWheelGazebo.cpp)
-#target_link_libraries(viwo_gazebo_node vins_lib)
+add_executable(viwo_gazebo_node src/rosNodeTestWheelGazebo.cpp)
+target_link_libraries(viwo_gazebo_node vins_lib)
 
 #add_executable(kitti_odom_test src/KITTIOdomTest.cpp)
 #target_link_libraries(kitti_odom_test vins_lib)

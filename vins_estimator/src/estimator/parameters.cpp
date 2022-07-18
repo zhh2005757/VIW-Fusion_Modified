@@ -42,6 +42,7 @@ Eigen::MatrixXd B {3,2};
 Eigen::Vector2d delta_g;
 Eigen::Matrix3d dR;
 Eigen::Vector3d tio_0;
+Eigen::Matrix3d rio_0;
 
 double BIAS_ACC_THRESHOLD;
 double BIAS_GYR_THRESHOLD;
@@ -313,9 +314,9 @@ void readParameters(std::string config_file)
             RIL = T.block<3, 3>(0, 0);
             TIL = T.block<3, 1>(0, 3);
             //归一化
-            Eigen::Quaterniond QIO(RIL);
+            Eigen::Quaterniond QIL(RIL);
             RIL.normalize();
-            RIL = QIO.toRotationMatrix();
+            RIL = QIL.toRotationMatrix();
             Eigen::Vector3d ypr = Utility::R2ypr(RIL);
             cout << "y p r is :" << ypr.transpose() << endl;
         }
@@ -364,8 +365,8 @@ void readParameters(std::string config_file)
     MIN_PARALLAX = MIN_PARALLAX / FOCAL_LENGTH;
 
 
-    VINS_RESULT_PATH = OUTPUT_FOLDER + "/vio.csv";
-    GROUNDTRUTH_PATH = OUTPUT_FOLDER + "/groundtruth.csv";
+    VINS_RESULT_PATH = OUTPUT_FOLDER + "/vio-0.csv";
+    GROUNDTRUTH_PATH = OUTPUT_FOLDER + "/groundtruth-0.csv";
     std::cout << "result path " << VINS_RESULT_PATH << std::endl;
     std::cout << "groundtruth path " << GROUNDTRUTH_PATH << std::endl;
     std::ofstream fout(VINS_RESULT_PATH, std::ios::out);
@@ -527,9 +528,10 @@ void readParameters(std::string config_file)
     fsSettings.release();
 
 //    R0 = Eigen::Matrix3d::Identity();
-    R0 = RIC[0];
+//    R0 = RIC[0];
     x_ep = Eigen::VectorXd::Zero(6);
     ff = 1.0;
     dR = Eigen::Matrix3d::Identity();
     tio_0 = Eigen::Vector3d::Zero();
+    rio_0 = Eigen::Matrix3d::Identity();
 }
